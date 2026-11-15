@@ -5,6 +5,13 @@ APP_PORT ?= 8590
 ADMIN_PORT ?= 8591
 PHB_PDF ?= ./PHB-5e.pdf
 SHEET_PDF ?= ./DnD_2024_Character-Sheet.pdf
+# Optional: the Monster Manual (2024) PDF feeds the DM's monster catalog. Without it, /dev/null is mounted
+# instead and the catalog is empty (custom monsters still work).
+MM_PDF ?= ./D&D 5e - Monster Manual 2024.pdf
+ifneq ($(shell test -f "$(MM_PDF)" && echo yes),yes)
+override MM_PDF := /dev/null
+endif
+export MM_PDF
 # Funnel only allows public ports 443, 8443 and 10000 (443 and 8443 are already used on this host).
 FUNNEL_PORT ?= 10000
 
@@ -21,6 +28,7 @@ check-docker:
 	@docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 (docker compose) is required. Install it and retry."; exit 1; }
 	@test -f "$(PHB_PDF)" || { echo "PHB PDF not found at $(PHB_PDF). Put it there or set PHB_PDF in .env."; exit 1; }
 	@test -f "$(SHEET_PDF)" || { echo "Character sheet PDF not found at $(SHEET_PDF). Put it there or set SHEET_PDF in .env."; exit 1; }
+	@test "$(MM_PDF)" != /dev/null || echo "Note: no Monster Manual PDF found (MM_PDF), so the DM monster catalog will be empty."
 
 up: check-docker ## Build (if needed) and start the app
 	@$(COMPOSE) up -d --build

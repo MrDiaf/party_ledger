@@ -8,7 +8,7 @@ RUN npm run build
 
 # ---- runtime ----
 FROM node:22-bookworm-slim
-# poppler-utils: pdftotext for the PHB rules search/spells, pdftoppm for the character sheet PDF. Codex CLI: AI assistant (pinned version).
+# poppler-utils: pdftotext for the PHB rules search/spells and Monster Manual stat blocks, pdftoppm for the character sheet PDF. Codex CLI: AI assistant (pinned version).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends poppler-utils ca-certificates \
  && apt-get clean \
@@ -16,7 +16,7 @@ RUN apt-get update \
  && mkdir -p /data \
  && chown node:node /data
 WORKDIR /app
-ENV NODE_ENV=production DATA_DIR=/data CODEX_HOME=/data/codex PHB_PDF=/reference/PHB-5e.pdf SHEET_PDF=/reference/DnD_2024_Character-Sheet.pdf PORT=3000 ADMIN_INTERNAL_PORT=3001
+ENV NODE_ENV=production DATA_DIR=/data CODEX_HOME=/data/codex PHB_PDF=/reference/PHB-5e.pdf SHEET_PDF=/reference/DnD_2024_Character-Sheet.pdf MM_PDF=/reference/monster-manual.pdf PORT=3000 ADMIN_INTERNAL_PORT=3001
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY server ./server

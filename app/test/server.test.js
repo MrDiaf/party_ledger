@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dnd-test-'));
+process.env.MM_PDF = '/nonexistent/monster-manual.pdf'; // tests never depend on the owner's book
 const { openDb } = await import('../server/db.js');
 const { createApp, createAdminApp } = await import('../server/index.js');
 const { isTrustedAdminRequest } = await import('../server/routes/admin.js');
@@ -191,6 +192,51 @@ test('characters: owner can archive, restore and delete; DM and others cannot', 
   assert.equal((await bob.del(`/api/characters/${id}`)).status, 200);
   assert.equal((await bob.get(`/api/characters/${id}`)).status, 404);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM character_versions WHERE character_id = ?').get(id).n, 0);
+});
+
+test('DM tools: monsters on the field and notes/announcements are DM-only, shared notes reach players', async () => {
+  // bob is a player, alice the DM of partyId.
+  assert.equal((await bob.get('/api/monsters')).status, 403, 'players cannot open the catalog');
+  assert.equal((await alice.get('/api/monsters')).status, 200);
+  assert.equal((await bob.get(`/api/campaigns/${partyId}/field`)).status, 403);
+  assert.equal((await bob.post(`/api/campaigns/${partyId}/field`, { monster: { name: 'Goblin', hp: 7, ac: 15 } })).status, 403);
+
+  const add = await alice.post(`/api/campaigns/${partyId}/field`, { monster: { name: 'Goblin', hp: 7, ac: 15 }, count: 3 });
+  assert.equal(add.body.ids.length, 3);
+  let field = (await alice.get(`/api/campaigns/${partyId}/field`)).body;
+  assert.deepEqual(field.map((f) => f.name), ['Goblin 1', 'Goblin 2', 'Goblin 3']);
+  await alice.post(`/api/campaigns/${partyId}/field`, { monster: { name: 'Goblin', hp: 7 } });
+  assert.equal((await alice.get(`/api/campaigns/${partyId}/field`)).body.at(-1).name, 'Goblin 4', 'numbering continues');
+
+  const g = field[0].id;
+  await alice.patch(`/api/campaigns/${partyId}/field/${g}`, { temp_hp: 3 });
+  let r = await alice.patch(`/api/campaigns/${partyId}/field/${g}`, { damage: 5 });
+  assert.deepEqual([r.body.hp, r.body.temp_hp], [5, 0], 'temp HP soaks damage first');
+  r = await alice.patch(`/api/campaigns/${partyId}/field/${g}`, { damage: 50 });
+  assert.equal(r.body.hp, 0, 'never below 0');
+  r = await alice.patch(`/api/campaigns/${partyId}/field/${g}`, { heal: 50 });
+  assert.equal(r.body.hp, 7, 'never above max');
+  await alice.patch(`/api/campaigns/${partyId}/field/${g}`, { initiative: 17, conditions: 'Prone' });
+  field = (await alice.get(`/api/campaigns/${partyId}/field`)).body;
+  assert.equal(field[0].initiative, 17);
+  assert.equal(field[0].monster.name, 'Goblin');
+  assert.equal((await alice.del(`/api/campaigns/${partyId}/field/all`)).status, 200);
+  assert.equal((await alice.get(`/api/campaigns/${partyId}/field`)).body.length, 0);
+
+  // Notes: private until shared.
+  assert.equal((await bob.post(`/api/campaigns/${partyId}/notes`, { title: 'hack' })).status, 403);
+  const secret = (await alice.post(`/api/campaigns/${partyId}/notes`, { title: 'The butler did it', body: 'shh' })).body.id;
+  const news = (await alice.post(`/api/campaigns/${partyId}/notes`, { title: 'Next session moved' })).body.id;
+  assert.equal((await bob.get(`/api/campaigns/${partyId}/notes`)).body.length, 0);
+  await alice.patch(`/api/campaigns/${partyId}/notes/${news}`, { shared: true, body: 'Friday instead' });
+  const seen = (await bob.get(`/api/campaigns/${partyId}/notes`)).body;
+  assert.deepEqual(seen.map((n) => n.title), ['Next session moved']);
+  assert.ok(seen[0].published_at);
+  assert.equal((await bob.patch(`/api/campaigns/${partyId}/notes/${news}`, { body: 'lol' })).status, 403);
+  assert.equal((await eve.get(`/api/campaigns/${partyId}/notes`)).status, 403, 'non-members see nothing');
+  assert.equal((await alice.get(`/api/campaigns/${partyId}/notes`)).body.length, 2);
+  await alice.del(`/api/campaigns/${partyId}/notes/${secret}`);
+  assert.equal((await alice.get(`/api/campaigns/${partyId}/notes`)).body.length, 1);
 });
 
 test('resource actions go through rules and land in history', async () => {

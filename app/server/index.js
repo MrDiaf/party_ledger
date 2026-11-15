@@ -8,6 +8,7 @@ import { sheetRoutes } from './sheetPdf.js';
 import { sessionMiddleware, errorHandler } from './core.js';
 import { authRouter, campaignsRouter } from './routes/auth.js';
 import { adminRouter, adminNetworkGate } from './routes/admin.js';
+import { dmRouter, monstersCatalog } from './routes/dm.js';
 import { partyRouter } from './routes/party.js';
 import { charactersRouter } from './routes/characters.js';
 import { mcpHandler } from './mcp.js';
@@ -36,6 +37,7 @@ export function createApp(db) {
   app.use('/api', sheetRoutes(db));
   app.use('/api/characters', importRouter(db));
   app.use('/api/characters', charactersRouter(db));
+  app.use('/api', dmRouter(db));
   app.use('/api/ai', aiRouter(db));
   // No admin API here: the admin panel lives only on the LAN-only admin port (createAdminApp).
   // MCP is only for the Codex process inside this container.
@@ -66,7 +68,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
   const adminPort = Number(process.env.ADMIN_INTERNAL_PORT || 3001);
   createApp(db).listen(port, () => console.log(`app listening on :${port}`));
-  setImmediate(rulesJson); // warm the PHB spell extraction so the first visitor does not wait
+  setImmediate(() => { rulesJson(); monstersCatalog(); }); // warm the PHB spell + Monster Manual extraction so the first visitor does not wait
   createAdminApp(db).listen(adminPort, () => console.log(`admin listening on :${adminPort} (LAN only)`));
   setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString()), 3600e3).unref();
 }

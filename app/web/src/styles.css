@@ -377,3 +377,18 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
   .log-entry { grid-template-columns: 44px 1fr auto; }
   .log-composer { bottom: calc(58px + env(safe-area-inset-bottom)); }
 }
+
+/* ---- DM: monsters on the field ---- */
+.monsters-layout { align-items: start; }
+.field-slot.down { opacity: .55; }
+.field-slot .init { width: 64px; text-align: center; font-weight: 600; }
+.field-slot .slot-name { background: transparent; border: 0; padding: 0; font-family: var(--display); font-size: 17px; color: var(--gold); }
+.hp-bar { height: 6px; background: var(--bg-2); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
+.hp-bar > div { height: 100%; transition: width .2s; }
+.abil-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; text-align: center; }
+.abil-row > div { background: var(--bg-2); border: 1px solid var(--line); border-radius: 7px; padding: 4px 2px; }
+@media (max-width: 760px) { .abil-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* ---- DM notes / announcements ---- */
+.note-body { min-height: 320px; font-family: inherit; line-height: 1.5; }
+.announcement { border-left: 3px solid var(--gold); }

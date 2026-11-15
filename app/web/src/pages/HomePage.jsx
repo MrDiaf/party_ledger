@@ -9,13 +9,17 @@ export default function HomePage() {
     const chars = await api.get('/characters');
     if (!cid) return { chars };
     const now = new Date();
-    const [events, quests, sessions, treasury] = await Promise.all([
+    const [events, quests, sessions, treasury, notes] = await Promise.all([
       api.get(`/campaigns/${cid}/events?from=${now.toISOString()}&to=${new Date(+now + 21 * 864e5).toISOString()}`),
       api.get(`/campaigns/${cid}/quests?status=active`),
       api.get(`/campaigns/${cid}/sessions`),
       api.get(`/campaigns/${cid}/treasury`),
+      api.get(`/campaigns/${cid}/notes`),
     ]);
-    return { chars, events, quests, sessions, treasury };
+    // Announcements = notes the DM shared: pinned first, then the most recently shared.
+    const announcements = notes.filter((n) => n.shared)
+      .sort((a, b) => b.pinned - a.pinned || String(b.published_at || b.updated_at).localeCompare(String(a.published_at || a.updated_at))).slice(0, 3);
+    return { chars, events, quests, sessions, treasury, announcements };
   }, [cid]);
 
   return (
@@ -27,6 +31,12 @@ export default function HomePage() {
           <p>You are not in a party yet. <Link to="/party">Create or join one</Link> to share a calendar, quests, treasury and session logs.</p>
         </div>
       )}
+      {data?.announcements?.map((n) => (
+        <Link key={n.id} to={`/notes/${n.id}`} className="card announcement" style={{ color: 'var(--text)', textDecoration: 'none' }}>
+          <div className="row between"><strong>📣 {n.pinned ? '📌 ' : ''}{n.title}</strong><span className="muted small">{fmtDate((n.published_at || n.updated_at) + 'Z')}</span></div>
+          <div className="pre small" style={{ marginTop: 6 }}>{n.body.length > 280 ? `${n.body.slice(0, 280)}…` : n.body}</div>
+        </Link>
+      ))}
       {data && campaign && (
         <div className="grid two">
           <div className="card">

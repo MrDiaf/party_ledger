@@ -25,6 +25,11 @@ services:
         source: ${SHEET_PDF:-./DnD_2024_Character-Sheet.pdf}
         target: /reference/DnD_2024_Character-Sheet.pdf
         read_only: true
+      # Monster Manual (2024): the DM's monster catalog. `make up` mounts /dev/null when the PDF is missing.
+      - type: bind
+        source: ${MM_PDF:-./D&D 5e - Monster Manual 2024.pdf}
+        target: /reference/monster-manual.pdf
+        read_only: true
 
 volumes:
   dnd-data:

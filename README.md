@@ -56,6 +56,16 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
 - **Import a paper sheet**: take a photo (or upload scans). The assistant reads it with vision and
   fills in a draft you review before creating.
 
+**For the DM** (only the party's DM sees these)
+- **Monsters**: search the Monster Manual by name, type or CR, open a stat block, and add one or
+  several (numbered "Goblin Warrior 1, 2, 3…") to **the field**, which holds the monsters active in
+  the current fight. Each slot tracks HP (damage/heal, temp HP), AC, initiative (🎲 rolls it for
+  everyone), conditions and notes, and keeps its stat block one tap away. Custom monsters work
+  without the book.
+- **DM notes**: private notes in tabs (plot threads, NPC secrets…). Tick **📣 Visible to players**
+  to turn a note into an **announcement**. Players see it on the Overview and under
+  *Announcements*; pinned ones stay on top.
+
 **AI assistant** (optional)
 - Uses the **Codex CLI** signed in with the admin's ChatGPT subscription (or an OpenAI API key).
 - Talks to the app through a built-in **MCP server**. In *Admin → AI assistant* the admin chooses
@@ -74,6 +84,11 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
   used for the assistant's rules search and for the PHB spells that are not in the SRD.
 - The official sheet at `./DnD_2024_Character-Sheet.pdf` (or set `SHEET_PDF` in `.env`), mounted
   read-only, for the PDF download and the blank-sheet download.
+- Optional: your Monster Manual (2024) PDF at `./D&D 5e - Monster Manual 2024.pdf` (or set
+  `MM_PDF`). The server reads the stat blocks once (a few seconds) and caches them in the data
+  volume. Nothing from the book is stored in the repo. Without it, the DM can still add custom monsters.
+
+All PDFs are git-ignored: keep them next to the app, never commit them.
 
 ## Usage
 
@@ -161,6 +176,7 @@ Everything has defaults; copy `.env.example` to `.env` to change them.
 | `ADMIN_ALLOWED_CIDRS` | private ranges + loopback | Networks allowed on the admin port (Tailscale is always refused) |
 | `ADMIN_PASSWORD` | empty | Optional extra password for the admin back door |
 | `PHB_PDF` | `./PHB-5e.pdf` | PHB PDF used for the rules search |
+| `MM_PDF` | `./D&D 5e - Monster Manual 2024.pdf` | Monster Manual PDF for the DM's monster catalog (optional) |
 | `AI_TIMEOUT_MS` | `240000` | Max time per assistant request |
 
 ## Data
@@ -187,3 +203,7 @@ Everything lives in the Docker volume `dnd-table_dnd-data` (SQLite database + Co
   is fine for a handful of players.
 - PHB content outside the SRD (most subclass features, most feats) appears by name only; type
   the details in, or ask the assistant to look them up in your PHB.
+- The Monster Manual is an OCR scan. About 400 stat blocks are read; names come from the book's
+  index, and HP is checked against its dice, but a few names stay garbled and some blocks miss a
+  score or carry an OCR typo. Rename or adjust a monster on the field, and check the book (the page is
+  shown) when it matters.

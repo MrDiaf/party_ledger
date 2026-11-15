@@ -113,6 +113,35 @@ CREATE TABLE IF NOT EXISTS log_entries (
   at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS field_monsters (
+  id INTEGER PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  monster_index TEXT,
+  name TEXT NOT NULL,
+  hp INTEGER NOT NULL DEFAULT 0,
+  hp_max INTEGER NOT NULL DEFAULT 0,
+  temp_hp INTEGER NOT NULL DEFAULT 0,
+  ac INTEGER,
+  initiative INTEGER,
+  conditions TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  sort INTEGER NOT NULL DEFAULT 0,
+  data TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS dm_notes (
+  id INTEGER PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  shared INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0,
+  author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  published_at TEXT
+);
 CREATE TABLE IF NOT EXISTS characters (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
