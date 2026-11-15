@@ -392,3 +392,6 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
 /* ---- DM notes / announcements ---- */
 .note-body { min-height: 320px; font-family: inherit; line-height: 1.5; }
 .announcement { border-left: 3px solid var(--gold); }
+.suggest { position: relative; }
+.suggest-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--gold-dim); border-radius: 8px; box-shadow: var(--shadow); }
+.suggest-list > button { display: block; width: 100%; text-align: left; white-space: normal; border-radius: 0; border-bottom: 1px solid var(--line); padding: 6px 10px; }
