@@ -30,6 +30,16 @@ services:
         source: ${MM_PDF:-./D&D 5e - Monster Manual 2024.pdf}
         target: /reference/monster-manual.pdf
         read_only: true
+      # Optional own OCR of the Monster Manual (`make mm-ocr`); read instead of the scan's text layer.
+      - type: bind
+        source: ${MM_OCR_JSON:-./Monster Manual 2024 - OCR.json}
+        target: /reference/monster-manual-ocr.json
+        read_only: true
+      # Optional ChatGPT transcriptions of the pages the OCR got wrong (`make mm-fix`).
+      - type: bind
+        source: ${MM_FIXES_JSON:-./Monster Manual 2024 - ChatGPT fixes.json}
+        target: /reference/monster-manual-fixes.json
+        read_only: true
 
 volumes:
   dnd-data:

@@ -12,11 +12,23 @@ ifneq ($(shell test -f "$(MM_PDF)" && echo yes),yes)
 override MM_PDF := /dev/null
 endif
 export MM_PDF
+# Optional: our own column-by-column OCR of the Monster Manual (`make mm-ocr`), far cleaner than the scan's text.
+MM_OCR_JSON ?= ./Monster Manual 2024 - OCR.json
+ifneq ($(shell test -f "$(MM_OCR_JSON)" && echo yes),yes)
+override MM_OCR_JSON := /dev/null
+endif
+export MM_OCR_JSON
+# Optional: ChatGPT transcriptions of the pages the OCR got wrong (`make mm-fix`).
+MM_FIXES_JSON ?= ./Monster Manual 2024 - ChatGPT fixes.json
+ifneq ($(shell test -f "$(MM_FIXES_JSON)" && echo yes),yes)
+override MM_FIXES_JSON := /dev/null
+endif
+export MM_FIXES_JSON
 # Funnel only allows public ports 443, 8443 and 10000 (443 and 8443 are already used on this host).
 FUNNEL_PORT ?= 10000
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart logs status build test ai-login funnel-up funnel-down funnel-status clean-data check-docker check-tailscale
+.PHONY: help up down restart logs status build test mm-ocr mm-fix ai-login funnel-up funnel-down funnel-status clean-data check-docker check-tailscale
 
 help: ## Show this help
 	@echo "Available commands:"
@@ -60,6 +72,15 @@ status: ## Show running services
 
 build: check-docker ## Rebuild the image without starting
 	@$(COMPOSE) build
+
+mm-ocr: ## Re-OCR the Monster Manual column by column (Docker + Tesseract, ~10 min) for a cleaner monster catalog
+	@test -f "$(MM_PDF)" && test "$(MM_PDF)" != /dev/null || { echo "Monster Manual PDF not found (MM_PDF)."; exit 1; }
+	@app/scripts/mm-ocr.sh "$(MM_PDF)" "./Monster Manual 2024 - OCR.json"
+	@echo "Done. Run 'make up' so the app re-reads the monsters."
+
+mm-fix: ## Send the Monster Manual pages the OCR got wrong to ChatGPT (linked Codex; app must be running). Resumable.
+	@test -f "./Monster Manual 2024 - OCR.json" || { echo "Run 'make mm-ocr' first."; exit 1; }
+	@cd app && node scripts/mm-fix.mjs "../$(MM_PDF)" "../Monster Manual 2024 - OCR.json" "../Monster Manual 2024 - ChatGPT fixes.json" $$($(COMPOSE) ps -q app)
 
 test: check-docker ## Run server + rules tests in a container
 	@docker build -q --target build -t dnd-table:test ./app >/dev/null

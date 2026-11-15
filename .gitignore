@@ -6,3 +6,5 @@ data/
 # Reference books and sheets (PHB, Monster Manual, character sheet) are large and copyrighted:
 # keep them next to the app, never in git.
 *.pdf
+# Our own OCR of the Monster Manual (`make mm-ocr`, `make mm-fix`) is the book's text: same rule.
+Monster Manual*.json

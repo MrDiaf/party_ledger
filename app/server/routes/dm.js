@@ -54,6 +54,25 @@ export function addToField(db, user, campaignId, b) {
   return { ids };
 }
 
+const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+const TEXT_FIELDS = { name: 120, type: 200, speed: 200, cr: 10, hp_dice: 60, skills: 500, vulnerabilities: 500, resistances: 500, immunities: 500, gear: 500, senses: 500, languages: 500, notes: 4000 };
+/** Edits to a field monster's own stat-block copy: known fields only, sane sizes. */
+function cleanMonsterPatch(p) {
+  const out = {};
+  for (const [k, max] of Object.entries(TEXT_FIELDS)) if (p[k] != null) out[k] = str(p[k], max);
+  for (const k of ['ac', 'initiative', 'hp', 'xp', 'pb']) if (p[k] !== undefined) out[k] = int(p[k]);
+  for (const k of ['abilities', 'saves']) {
+    if (p[k] && typeof p[k] === 'object') out[k] = Object.fromEntries(ABIL.filter((a) => int(p[k][a]) != null).map((a) => [a, int(p[k][a])]));
+  }
+  if (Array.isArray(p.sections)) {
+    out.sections = p.sections.slice(0, 10).map((s) => ({
+      name: str(s?.name, 60) || 'Traits',
+      entries: (Array.isArray(s?.entries) ? s.entries : []).slice(0, 40).map((e) => ({ name: str(e?.name, 120), text: str(e?.text, 4000) })).filter((e) => e.name || e.text),
+    })).filter((s) => s.entries.length);
+  }
+  return out;
+}
+
 export function updateFieldMonster(db, user, campaignId, id, b) {
   requireDm(db, user, campaignId);
   const row = db.prepare('SELECT * FROM field_monsters WHERE id = ? AND campaign_id = ?').get(Number(id), Number(campaignId));
@@ -69,6 +88,8 @@ export function updateFieldMonster(db, user, campaignId, id, b) {
   };
   // `damage` / `heal` are relative (temp HP absorbs damage first); `hp` sets it outright.
   let hp = b.hp != null ? int(b.hp, row.hp) : row.hp;
+  // Raising max HP raises current HP by the same amount (a buffed monster is not left "wounded").
+  if (b.hp == null && f.hp_max > row.hp_max) hp += f.hp_max - row.hp_max;
   if (b.damage != null) {
     let d = Math.max(0, int(b.damage, 0));
     const fromTemp = Math.min(f.temp_hp, d);
@@ -77,8 +98,10 @@ export function updateFieldMonster(db, user, campaignId, id, b) {
   }
   if (b.heal != null) hp += Math.max(0, int(b.heal, 0));
   f.hp = Math.min(Math.max(hp, 0), f.hp_max || hp);
-  db.prepare('UPDATE field_monsters SET name=?, hp=?, hp_max=?, temp_hp=?, ac=?, initiative=?, conditions=?, notes=? WHERE id=?')
-    .run(f.name, f.hp, f.hp_max, f.temp_hp, f.ac, f.initiative, f.conditions, f.notes, row.id);
+  // `monster` edits this slot's own copy of the stat block (speed, scores, traits, actions…).
+  const data = b.monster && typeof b.monster === 'object' ? JSON.stringify({ ...JSON.parse(row.data || '{}'), ...cleanMonsterPatch(b.monster), edited: true }) : row.data;
+  db.prepare('UPDATE field_monsters SET name=?, hp=?, hp_max=?, temp_hp=?, ac=?, initiative=?, conditions=?, notes=?, data=? WHERE id=?')
+    .run(f.name, f.hp, f.hp_max, f.temp_hp, f.ac, f.initiative, f.conditions, f.notes, data, row.id);
   return { ok: true, hp: f.hp, temp_hp: f.temp_hp };
 }
 

@@ -92,22 +92,113 @@ function LazyInput({ value, onCommit, as = 'input', ...props }) {
   return <Tag {...props} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter' && as === 'input') e.currentTarget.blur(); }} />;
 }
 
-/** One monster on the field: HP with damage/heal, initiative, conditions, notes and its stat block. */
+const CONDITIONS = ['Blinded', 'Charmed', 'Deafened', 'Exhaustion', 'Frightened', 'Grappled', 'Incapacitated', 'Invisible', 'Paralyzed', 'Petrified', 'Poisoned', 'Prone', 'Restrained', 'Stunned', 'Unconscious'];
+const SECTION_NAMES = ['Traits', 'Actions', 'Bonus Actions', 'Reactions', 'Legendary Actions'];
+
+/** Active conditions as chips (tap to clear) plus the full 5e list to pick from. Stored as "Prone, Poisoned". */
+function ConditionPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const active = String(value || '').split(',').map((c) => c.trim()).filter(Boolean);
+  const toggle = (c) => onChange((active.includes(c) ? active.filter((x) => x !== c) : [...active, c]).join(', '));
+  return (
+    <div className="chips">
+      {active.map((c) => <button key={c} className="chip on" title="Tap to remove" onClick={() => toggle(c)}>{c} ✕</button>)}
+      <button className="chip" onClick={() => setOpen((o) => !o)}>{open ? 'Done' : '+ Condition'}</button>
+      {open && CONDITIONS.filter((c) => !active.includes(c)).map((c) => <button key={c} className="chip" onClick={() => toggle(c)}>{c}</button>)}
+    </div>
+  );
+}
+
+/** Edit this slot's own copy of the stat block: header values, scores and every trait / action. */
+function EditStatBlock({ s, onSave, onClose }) {
+  const m0 = s.monster;
+  const [m, setM] = useState(() => ({
+    type: m0.type || '', cr: m0.cr || '', speed: m0.speed || '', hp_dice: m0.hp_dice || '', initiative: m0.initiative ?? '',
+    skills: m0.skills || '', senses: m0.senses || '', languages: m0.languages || '', resistances: m0.resistances || '', immunities: m0.immunities || '', vulnerabilities: m0.vulnerabilities || '', gear: m0.gear || '',
+    abilities: { ...(m0.abilities || {}) },
+    sections: (m0.sections || []).map((x) => ({ name: x.name, entries: x.entries.map((e) => ({ ...e })) })),
+  }));
+  const [run, busy, err] = useAction();
+  const set = (k) => (e) => setM({ ...m, [k]: e.target.value });
+  const setSec = (si, fn) => setM({ ...m, sections: m.sections.map((x, i) => (i === si ? fn(x) : x)) });
+  const setEntry = (si, ei, k, v) => setSec(si, (x) => ({ ...x, entries: x.entries.map((e, j) => (j === ei ? { ...e, [k]: v } : e)) }));
+  return (
+    <Modal title={`✎ ${s.name}`} onClose={onClose} wide>
+      <div className="stack">
+        <p className="muted small" style={{ margin: 0 }}>Changes apply to this monster on the field only, not to the Monster Manual.</p>
+        <div className="grid three">
+          <div><label>Type</label><input value={m.type} onChange={set('type')} placeholder="Medium Humanoid, Neutral" /></div>
+          <div><label>Challenge rating</label><input value={m.cr} onChange={set('cr')} /></div>
+          <div><label>Initiative bonus</label><input type="number" value={m.initiative} onChange={set('initiative')} /></div>
+          <div><label>Speed</label><input value={m.speed} onChange={set('speed')} /></div>
+          <div><label>Hit dice</label><input value={m.hp_dice} onChange={set('hp_dice')} placeholder="8d8 + 16" /></div>
+        </div>
+        <div className="abil-row">{ABIL.map((a) => (
+          <div key={a}><span className="muted small">{a.toUpperCase()}</span>
+            <input type="number" value={m.abilities[a] ?? ''} style={{ textAlign: 'center' }}
+              onChange={(e) => setM({ ...m, abilities: { ...m.abilities, [a]: e.target.value === '' ? undefined : Number(e.target.value) } })} /></div>
+        ))}</div>
+        <div className="grid two">
+          {[['skills', 'Skills'], ['senses', 'Senses'], ['languages', 'Languages'], ['resistances', 'Resistances'], ['immunities', 'Immunities'], ['vulnerabilities', 'Vulnerabilities'], ['gear', 'Gear']].map(([k, l]) => (
+            <div key={k}><label>{l}</label><input value={m[k]} onChange={set(k)} /></div>
+          ))}
+        </div>
+        {m.sections.map((sec, si) => (
+          <div key={si} className="card stack" style={{ gap: 6 }}>
+            <div className="row">
+              <select value={sec.name} onChange={(e) => setSec(si, (x) => ({ ...x, name: e.target.value }))} style={{ width: 'auto' }}>
+                {[...new Set([...SECTION_NAMES, sec.name])].map((n) => <option key={n}>{n}</option>)}
+              </select>
+              <span className="grow" />
+              <button className="small danger" onClick={() => setM({ ...m, sections: m.sections.filter((_, i) => i !== si) })}>Remove section</button>
+            </div>
+            {sec.entries.map((e, ei) => (
+              <div key={ei} className="stack" style={{ gap: 4 }}>
+                <div className="row" style={{ flexWrap: 'nowrap' }}>
+                  <input value={e.name} placeholder="Name (e.g. Bite)" onChange={(ev) => setEntry(si, ei, 'name', ev.target.value)} />
+                  <button className="small ghost" title="Remove" onClick={() => setSec(si, (x) => ({ ...x, entries: x.entries.filter((_, j) => j !== ei) }))}>✕</button>
+                </div>
+                <textarea rows={2} value={e.text} placeholder="Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Piercing damage." onChange={(ev) => setEntry(si, ei, 'text', ev.target.value)} />
+              </div>
+            ))}
+            <button className="small" onClick={() => setSec(si, (x) => ({ ...x, entries: [...x.entries, { name: '', text: '' }] }))}>+ Entry</button>
+          </div>
+        ))}
+        <div className="row">
+          <button className="small" onClick={() => setM({ ...m, sections: [...m.sections, { name: SECTION_NAMES.find((n) => !m.sections.some((x) => x.name === n)) || 'Traits', entries: [{ name: '', text: '' }] }] })}>+ Section</button>
+        </div>
+        <ErrorBox error={err} />
+        <div className="row end">
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={busy} onClick={() => run(async () => {
+            const sections = m.sections.map((x) => ({ ...x, entries: x.entries.filter((e) => e.name.trim() || e.text.trim()) })).filter((x) => x.entries.length);
+            await onSave({ ...m, initiative: m.initiative === '' ? null : Number(m.initiative), sections });
+            onClose();
+          })}>Save</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** One monster on the field: HP with damage/heal, initiative, conditions, notes and its (editable) stat block. */
 function Slot({ s, cid, onChanged, onRemove }) {
   const [amt, setAmt] = useState('');
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [run, busy, err] = useAction();
   const patch = (body) => run(async () => { await api.patch(`/campaigns/${cid}/field/${s.id}`, body); await onChanged(); });
   const pct = s.hp_max ? Math.max(0, Math.min(100, (s.hp / s.hp_max) * 100)) : 0;
   const down = s.hp_max > 0 && s.hp <= 0;
   const hit = (key) => { const n = Number(amt); if (n > 0) { patch({ [key]: n }); setAmt(''); } };
+  const num = (v) => (v === '' ? null : Number(v));
   return (
     <div className={`card stack field-slot ${down ? 'down' : ''}`} style={{ gap: 8 }}>
       <div className="row" style={{ flexWrap: 'nowrap' }}>
-        <LazyInput className="init" type="number" title="Initiative" placeholder="Init" value={s.initiative ?? ''} onCommit={(v) => patch({ initiative: v === '' ? null : Number(v) })} />
+        <LazyInput className="init" type="number" title="Initiative" placeholder="Init" value={s.initiative ?? ''} onCommit={(v) => patch({ initiative: num(v) })} />
         <div className="grow">
           <LazyInput className="slot-name" value={s.name} onCommit={(v) => patch({ name: v })} />
-          <div className="muted small">{down ? '💀 Down · ' : ''}AC {s.ac ?? '—'}{s.monster.cr ? ` · CR ${s.monster.cr}` : ''}{s.monster.type ? ` · ${s.monster.type.split(',')[0]}` : ''}</div>
+          <div className="muted small">{down ? '💀 Down · ' : ''}AC {s.ac ?? '—'}{s.monster.speed ? ` · ${s.monster.speed}` : ''}{s.monster.cr ? ` · CR ${s.monster.cr}` : ''}{s.monster.type ? ` · ${s.monster.type.split(',')[0]}` : ''}{s.monster.edited ? ' · ✎ edited' : ''}</div>
         </div>
         <button className="small ghost" title="Remove from the field" onClick={onRemove}>✕</button>
       </div>
@@ -119,21 +210,29 @@ function Slot({ s, cid, onChanged, onRemove }) {
         <button className="small danger" disabled={busy || !(Number(amt) > 0)} onClick={() => hit('damage')}>Damage</button>
         <button className="small" disabled={busy || !(Number(amt) > 0)} onClick={() => hit('heal')}>Heal</button>
       </div>
-      <LazyInput placeholder="Conditions (Prone, Frightened…)" value={s.conditions} onCommit={(v) => patch({ conditions: v })} />
+      <ConditionPicker value={s.conditions} onChange={(v) => patch({ conditions: v })} />
       <div className="row">
-        <button className="small ghost" onClick={() => setOpen((o) => !o)}>{open ? '▾ Hide stat block' : '▸ Stat block & notes'}</button>
+        <button className="small ghost" onClick={() => setOpen((o) => !o)}>{open ? '▾ Hide details' : '▸ Edit, stat block & notes'}</button>
       </div>
       {open && (
         <div className="stack" style={{ gap: 8 }}>
           <div className="grid three">
-            <div><label>Max HP</label><LazyInput type="number" value={s.hp_max} onCommit={(v) => patch({ hp_max: Number(v) })} /></div>
+            <div><label>Current HP</label><LazyInput type="number" value={s.hp} onCommit={(v) => patch({ hp: Number(v) })} /></div>
+            <div><label>Max HP <span className="muted small">(raising it heals too)</span></label><LazyInput type="number" value={s.hp_max} onCommit={(v) => patch({ hp_max: Number(v) })} /></div>
             <div><label>Temp HP</label><LazyInput type="number" value={s.temp_hp} onCommit={(v) => patch({ temp_hp: Number(v) })} /></div>
-            <div><label>AC</label><LazyInput type="number" value={s.ac ?? ''} onCommit={(v) => patch({ ac: v === '' ? null : Number(v) })} /></div>
+            <div><label>Armor Class</label><LazyInput type="number" value={s.ac ?? ''} onCommit={(v) => patch({ ac: num(v) })} /></div>
+            <div><label>Initiative (rolled)</label><LazyInput type="number" value={s.initiative ?? ''} onCommit={(v) => patch({ initiative: num(v) })} /></div>
+            <div><label>Speed</label><LazyInput value={s.monster.speed || ''} onCommit={(v) => patch({ monster: { speed: v } })} /></div>
           </div>
           <div><label>Notes</label><LazyInput as="textarea" rows={2} value={s.notes} onCommit={(v) => patch({ notes: v })} /></div>
-          <StatBlock m={s.monster} />
+          <div className="row between">
+            <strong className="small">Stat block</strong>
+            <button className="small" onClick={() => setEditing(true)}>✎ Edit stat block</button>
+          </div>
+          <StatBlock m={{ ...s.monster, ac: s.ac, hp: s.hp_max }} />
         </div>
       )}
+      {editing && <EditStatBlock s={s} onClose={() => setEditing(false)} onSave={(monster) => api.patch(`/campaigns/${cid}/field/${s.id}`, { monster }).then(onChanged)} />}
       <ErrorBox error={err} />
     </div>
   );

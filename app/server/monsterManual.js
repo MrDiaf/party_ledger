@@ -10,6 +10,25 @@ import { execFileSync } from 'node:child_process';
 const dec = (s) => s.replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 const letters = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
 
+/**
+ * Tesseract hOCR of one column image → [{ text, h }]. Heights are converted from 300 dpi pixels to points so they
+ * match pdftotext's; a wide gap between words becomes two spaces (index and list columns rely on it).
+ */
+export function hocrLines(hocr, dpi = 300) {
+  const out = [];
+  const lineRe = /<span class=['"](?:ocr_line|ocr_header|ocr_caption|ocr_textfloat)['"][^>]*title=['"]bbox (\d+) (\d+) (\d+) (\d+)[^'"]*['"][^>]*>([\s\S]*?)<\/span>\s*(?=<span class=['"]ocr_(?:line|header|caption|textfloat)|<\/p>|<\/div>)/g;
+  for (const m of hocr.matchAll(lineRe)) {
+    const words = [...m[5].matchAll(/<span class=['"]ocrx_word['"][^>]*title=['"]bbox (\d+) \d+ (\d+) \d+[^'"]*['"][^>]*>([\s\S]*?)<\/span>/g)]
+      .map((w) => ({ x: Number(w[1]), x2: Number(w[2]), t: dec(w[3].replace(/<[^>]+>/g, '')) })).filter((w) => w.t.trim());
+    if (!words.length) continue;
+    let text = words[0].t;
+    for (let i = 1; i < words.length; i++) text += (words[i].x - words[i - 1].x2 > 30 ? '   ' : ' ') + words[i].t;
+    text = text.replace(/^[\s|_\[\]{}]+/, '').replace(/[\s|_]+$/, '').trim(); // stat-block box borders read as "|" / "_"
+    if (text) out.push({ text, h: ((Number(m[4]) - Number(m[2])) * 72) / dpi });
+  }
+  return out;
+}
+
 /** pdftotext -bbox-layout → [{ page, lines: [{ text, h }] }] in reading order (left column, then right). */
 export function pageLines(html) {
   return html.split('<page ').slice(1).map((pg, i) => {
@@ -27,7 +46,7 @@ export function pageLines(html) {
 }
 
 // ---------- OCR repair ----------
-const DIGIT = { ']': '1', '[': '1', l: '1', I: '1', i: '1', '|': '1', O: '0', o: '0', s: '5', S: '5', a: '4', B: '8', Z: '2', z: '2', g: '9', q: '9', b: '6', G: '6', t: '1' };
+const DIGIT = { r: '1', ']': '1', '[': '1', l: '1', I: '1', i: '1', '|': '1', O: '0', o: '0', s: '5', S: '5', a: '4', B: '8', Z: '2', z: '2', g: '9', q: '9', b: '6', G: '6', t: '1' };
 /** A token that should be a number ("l7s" → 175, "I 39" handled by callers). NaN when hopeless. */
 export function ocrNum(tok) {
   const t = String(tok ?? '').replace(/[−–]/g, '-').replace(/[^\w+\-|\]\[]/g, '');
@@ -62,6 +81,41 @@ function lev(a, b) {
   }
   return d[b.length];
 }
+// Small caps come out of this OCR as look-alikes: i→r/l/t, n→N/u/r, b→e, G→C… Letters in the same group
+// count as a match when comparing a garbled heading with a real name.
+const LOOK = {};
+for (const g of ['irltfj1', 'nuhmr', 'aoecbs', 'gc', 'kx', 'vwy', 'dop']) for (const c of g) (LOOK[c] ||= new Set()).add(g);
+const alike = (a, b) => a === b || [...(LOOK[a] || [])].some((g) => g.includes(b));
+/** Edit distance where look-alike letters substitute for free. */
+export function ocrLev(a, b) {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (alike(a[i - 1], b[j - 1]) ? 0 : 1));
+      prev = t;
+    }
+  }
+  return d[b.length];
+}
+/** Drop illustration/drop-cap debris in front of a heading: "\\Lnceooru Gnoul", "kGeurrNous", "ffiMvcor.r". */
+export const cleanHeading = (t) => String(t).replace(/^[^A-Za-z]+/, '').replace(/^ffi/, '').replace(/^[A-Za-z]-(?=[A-Z])/, '')
+  .replace(/^[A-Za-z](?=[A-Z][A-Za-z.]{3,})(?![A-Z]{4,}\b)/, (c, o, str) => (/^[A-Z]{4,}\b/.test(str) ? c : '')).replace(/^[^A-Za-z]+/, '').trim();
+
+/** 0..1 how well a garbled heading fits a real name: look-alike letters, and each word's first letter. */
+export function nameFit(garbled, name) {
+  const g = letters(garbled), n = letters(name);
+  if (!g || !n) return 0;
+  let fit = 1 - ocrLev(g, n) / Math.max(g.length, n.length);
+  const gw = String(garbled).split(/[\s-]+/).map(letters).filter((w) => w.length > 1);
+  const nw = String(name).split(/[\s-]+/).map(letters).filter((w) => w.length > 1 && !['of', 'the'].includes(w));
+  // Word initials are capitals, which the OCR mostly gets right: one that cannot be a look-alike rules the name out.
+  if (gw.length === nw.length) for (let i = 0; i < gw.length; i++) { if (!alike(gw[i][0], nw[i][0])) return 0; fit += 0.05; }
+  return fit;
+}
+
 /** 0..1 similarity of two garbled strings by their letters. */
 export const similarity = (a, b) => { const x = letters(a), y = letters(b); return x && y ? 1 - lev(x, y) / Math.max(x.length, y.length) : 0; };
 
@@ -94,12 +148,34 @@ export function parseIndex(text) {
 export function parseNameList(text) {
   const out = new Set();
   for (const line of text.split('\n')) {
-    for (const cell of line.trim().split(/\s{2,}/)) {
+    for (const raw of line.trim().split(/\s{2,}/)) {
+      // Index cells carry dot leaders and page numbers ("Goblin Minion.......142", "Fiend Cultist....."): keep the name.
+      const cell = raw.replace(/\s*[.…,]{2,}.*$/, '').replace(/[\s.,]+$/, '');
       const c = cell.replace(/\s+(?=[a-z]{1,3}\b)/g, (m, o, str) => (/[a-z]$/.test(str.slice(0, o)) ? '' : m)).trim(); // "Plesiosau rus"
       if (/^[A-Z][A-Za-z'\- ]{2,40}$/.test(c) && !/^(The|This|In|Monsters?)\b/.test(c) && c.split(' ').length <= 5) out.add(c);
     }
   }
   return [...out];
+}
+
+/**
+ * A heading no index entry fits ("GoeLrN MrNroN"): rebuild each word from a common book word of the same
+ * length that is a letter-for-letter look-alike ("goblin", "minion"), else keep the OCR text.
+ */
+export function rebuildName(garbled, vocab) {
+  const words = String(garbled).replace(/[^A-Za-z' -]/g, '').replace(/^[\s'-]+/, '').split(/\s+/).filter(Boolean);
+  return titleCase(words.map((w) => {
+    const lw = w.toLowerCase();
+    if (lw.length < 3 || (vocab.get(lw) || 0) >= 5) return lw;
+    let best = null;
+    for (const [c, n] of vocab) {
+      if (n < 3 || Math.abs(c.length - lw.length) > 1 || !alike(lw[0], c[0])) continue;
+      const d = ocrLev(lw, c);
+      const exact = c[0] === lw[0] ? 1 : 0; // "goblin" beats the misread "coblin"
+      if (d <= (lw.length >= 7 ? 1 : 0) && (!best || d < best.d || (d === best.d && (exact > best.exact || (exact === best.exact && n > best.n))))) best = { c, d, n, exact };
+    }
+    return best ? best.c : lw;
+  }).join(' '));
 }
 
 /** Tidy a monster name: "GiantBadger", "Fang ofYeenoghu", "Lege nd,", "Will-olWisp". */
@@ -150,16 +226,13 @@ export function bookPages(pages) {
 }
 
 // ---------- stat blocks ----------
-const SIZES = 'tiny|small|medium|large|huge|[a-z]argantuan';
 const TYPES = 'aberration|beast|celestial|construct|dragon|elemental|fey|fiend|giant|humanoid|monstrosity|ooze|plant|undead';
-const TYPE_LINE = new RegExp(`^(${SIZES})(or(${SIZES}))?(swarmof(${SIZES}))?(${TYPES})`);
 /** "CR 2 (XP 450; PB +2)" — the XP part may be split off onto other lines (dragons: "in lair" values). */
 const isCrLine = (t) => /^[Cc]\s?[Rr]\s+[0-9lIOti/]{1,4}\s*(\(|$)/.test(t);
 const SECTIONS = ['Traits', 'Actions', 'Bonus Actions', 'Reactions', 'Legendary Actions'];
 const FIELDS = [['skills', 'Skills'], ['vulnerabilities', 'Vulnerabilities'], ['resistances', 'Resistances'], ['immunities', 'Immunities'], ['gear', 'Gear'], ['senses', 'Senses'], ['languages', 'Languages']];
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
-const isTypeLine = (t) => TYPE_LINE.test(letters(t));
 function sectionOf(t) {
   if (t.split(/\s+/).length > 3 || /\d/.test(t) || t.length > 24) return null;
   let best = null;
@@ -175,15 +248,57 @@ const ALIGNMENTS = ['Unaligned', 'Lawful Good', 'Neutral Good', 'Chaotic Good', 
 const cap1 = (w) => (w ? w[0].toUpperCase() + w.slice(1) : '');
 /** "La rge Co nstru ct, U n a I igned" → { size, creature_type, alignment, type: 'Large Construct, Unaligned' }. */
 export function typeInfo(text) {
-  const t = TYPE_LINE.exec(letters(text)) || [];
-  const size = cap1((t[1] || '').replace(/^.argantuan$/, 'gargantuan'));
-  const sizes = t[3] ? `${size} or ${cap1(t[3].replace(/^.argantuan$/, 'gargantuan'))}` : size;
-  const ct = cap1(t[6] || '');
-  const tag = /\(([^)]{2,40})\)/.exec(text.split(',')[0])?.[1];
+  const head = letters(String(text).split(',')[0].replace(/\([^)]*\)/g, ''));
+  const take = (str, list, min) => {
+    let best = null;
+    for (const w of list) { const sim = similarity(str.slice(0, w.length), w); if (sim >= min && (!best || sim > best.sim)) best = { w, sim }; }
+    return best?.w;
+  };
+  const SZ = ['tiny', 'small', 'medium', 'large', 'huge', 'gargantuan'];
+  let rest = head;
+  const size = take(rest, SZ, 0.7);
+  if (!size) return { size: '', creature_type: '', alignment: '', type: '' };
+  rest = rest.slice(size.length);
+  let size2 = null;
+  if (rest.startsWith('or')) { size2 = take(rest.slice(2), SZ, 0.7); if (size2) rest = rest.slice(2 + size2.length); }
+  let swarm = null;
+  if (similarity(rest.slice(0, 7), 'swarmof') >= 0.7) { swarm = take(rest.slice(7), SZ, 0.7); rest = rest.slice(7 + (swarm || '').length); }
+  const ct = cap1(take(rest, TYPES.split('|'), 0.6) || '');
+  const tag = /\(([^)]{2,40})\)/.exec(String(text).split(',')[0])?.[1];
   const alignText = text.includes(',') ? text.slice(text.indexOf(',') + 1) : '';
   const alignment = alignText ? ALIGNMENTS.map((a) => [a, similarity(alignText, a)]).sort((x, y) => y[1] - x[1])[0][0] : '';
-  const kind = t[4] ? `Swarm of ${cap1(t[5])} ${ct}s` : ct;
-  return { size, creature_type: ct, alignment, type: `${sizes} ${kind}${tag ? ` (${fixText(tag)})` : ''}${alignment ? `, ${alignment}` : ''}` };
+  const sizes = size2 ? `${cap1(size)} or ${cap1(size2)}` : cap1(size);
+  const kind = swarm ? `Swarm of ${cap1(swarm)} ${ct}s` : ct;
+  return { size: cap1(size), creature_type: ct, alignment, type: `${sizes} ${kind}${tag ? ` (${fixText(tag)})` : ''}${alignment ? `, ${alignment}` : ''}`.replace(/\s+,/, ',') };
+}
+
+const LABEL = { str: /^s+t+r+/, dex: /^d+e+x+/, con: /^c+o+n+/, int: /^[il1]+n+t+/, wis: /^w+i+s+/, cha: /^c+h+a+/ };
+const asMod = (t) => {
+  const x = String(t ?? '').replace(/^=/, '-').replace(/^4(?=\d$)/, '+'); // "=2" is -2, "42" is +2
+  return /^[+\-−][0-9lIOoZz\]]{1,2}$/.test(x) ? ocrNum(x) : NaN;
+};
+/** "Str 17 +3 +3 Dex20 +5 +5 COoNnN14 +2 +2 … CHa6é =2 -2": scores (checked against their modifiers) and saves. */
+export function labelledAbilities(text) {
+  const toks = String(text).replace(/([+\-−=])['’.]/g, '$1').split(/\s+/).filter(Boolean);
+  const abilities = {}, saves = {};
+  for (let i = 0; i < toks.length; i++) {
+    const low = toks[i].toLowerCase().replace(/^[(\[{]/, '');
+    const key = Object.keys(LABEL).find((k) => LABEL[k].test(low));
+    if (!key || abilities[key] != null) continue;
+    const suffix = low.slice(LABEL[key].exec(low)[0].length).replace(/[^a-z0-9|\]]/g, '');
+    let j = i + 1;
+    let cands = [];
+    if (suffix) cands = [suffix.slice(-2), suffix.slice(0, 2), suffix.slice(-1)];
+    else if (/^[0-9lIOoSs\]|]{1,2}$/.test(toks[j] || '')) { cands = [toks[j]]; j++; }
+    const mod = asMod(toks[j]);
+    if (!Number.isFinite(mod)) continue;
+    // The score must agree with its modifier; when no reading does, the modifier decides (10 + 2 × mod).
+    const score = cands.map(ocrNum).find((n) => Number.isFinite(n) && n >= 1 && n <= 30 && Math.floor((n - 10) / 2) === mod) ?? 10 + 2 * mod;
+    abilities[key] = score;
+    const save = asMod(toks[j + 1]);
+    if (Number.isFinite(save) && save !== mod) saves[key] = save;
+  }
+  return { abilities, saves };
 }
 
 const avgHp = (dice) => {
@@ -206,11 +321,22 @@ export function parseBlock(lines) {
   m.ac = ac ? ocrNum(ac[1]) : null;
   const ini = /[lI]nitiative\s*([+-−]?\s?[0-9lIOa]{1,2})/.exec(headText);
   m.initiative = ini ? ocrNum(ini[1].replace(/\s/g, '')) : null;
-  const hp = /\bHP\s*['’.]?\s*([0-9A-Za-z]{1,4})\s*\(['’.]?([^)]*)\)/.exec(headText);
+  const hp = /\bHP\s*['’.]?\s*([0-9A-Za-z]{1,4})\s*[($]['’.]?([^)]*)\)/.exec(headText);
   if (hp) {
-    m.hp_dice = fixText(hp[2].replace(/['’]/g, '')).replace(/(?<=d\d*)[a-zA-Z]|(?<=[+-]\s?\d*)[a-zA-Z]/g, (c) => DIGIT[c] ?? c).replace(/\s*([+-])\s*/g, ' $1 ');
-    const avg = avgHp(m.hp_dice);
+    // Repair each number of "27d8 + 5a" on its own ("r0d8" → 10d8, "5a" → 54).
+    const num1 = (t) => { const n = ocrNum(t); return Number.isFinite(n) ? n : t; };
+    m.hp_dice = fixText(hp[2].replace(/['’]/g, ''))
+      .replace(/([0-9A-Za-z]{1,3})\s*d\s*([0-9A-Za-z]{1,3})/, (_, a, b) => `${num1(a)}d${num1(b)}`)
+      .replace(/\s*([+-])\s*([0-9A-Za-z]{1,3})/g, (_, sg, v) => ` ${sg} ${num1(v)}`).trim();
+    let avg = avgHp(m.hp_dice);
     const n = ocrNum(hp[1]);
+    // "HP 315 ($2d8 + 126)": the bracket swallowed a digit of the dice count. Restore it if that makes them agree.
+    if (Number.isFinite(n) && avg != null && Math.abs(n - avg) > 1) {
+      for (let k = 1; k <= 9; k++) {
+        const fixed = m.hp_dice.replace(/^(\d+)d/, `${k}$1d`);
+        if (Math.abs(avgHp(fixed) - n) <= 1) { m.hp_dice = fixed; avg = avgHp(fixed); break; }
+      }
+    }
     m.hp = avg != null && (!Number.isFinite(n) || Math.abs(n - avg) > 1) ? avg : n;
   } else {
     const flat = /\bHP\s+([0-9lIOoSsa]{1,4})/.exec(headText);
@@ -222,12 +348,17 @@ export function parseBlock(lines) {
   // Ability scores: find the six labels by shape (Srn/Str, Dex/Drx, Cott/Con, lrr/Int, Wts/Wis, Cxr/Cha) and read
   // "score mod save" after each. Rows can be split over lines, so work on the joined header tokens.
   m.abilities = {}; m.saves = {};
-  const toks = head.filter((l) => !/^(Skills|Senses|Languages|C\s?R|Resist|[lI]mmun|Vulner|Gear)\b/.test(l.text)).map((l) => l.text).join(' ')
+  let toks = head.filter((l) => !/^(Skills|Senses|Languages|C\s?R|Resist|[lI]mmun|Vulner|Gear)\b/.test(l.text)).map((l) => l.text).join(' ')
     .replace(/([+\-−])['’.]/g, '$1')
+    .replace(/\b([A-Z][A-Za-z]{2})([lI]\d)\b/g, '$1 $2') // "Conl0" → "Con l0\"
     .replace(/(?<=\s|^)([A-Za-z.]{2,5})['’.,]?([\]\[]?\d{1,2})(?=\s)/g, '$1 $2')
     .replace(/(?<=\s)['’.,](?=[\dlI\]])/g, '').split(/\s+/);
+  // "+" is often read as "4": in a modifier/save position "42" means +2, "49" +9, "40" +0.
+  for (let i = 1; i < toks.length; i++) if (/^4\d$/.test(toks[i]) && (/^[+\-−]/.test(toks[i - 1]) || /^[0-9lI]{1,2}$/.test(toks[i - 1]) || /^4\d$/.test(toks[i - 1]))) toks[i] = `+${toks[i][1]}`;
   const isNum = (t) => /^[0-9lIOoSs\]]{1,2}$/.test(t) && Number.isFinite(ocrNum(t));
   const isMod = (t) => /^[+\-−][0-9lIOoZz\]]{1,2}$/.test(t);
+  // Clean-OCR pass first: labels found even when stretched or glued ("COoNnN14", "Conl8s", "CHA]", "CHAY").
+  Object.assign(m, labelledAbilities(head.filter((l) => !/^(Skills|Senses|Languages|C\s?R|Resist|[lI]mmun|Vulner|Gear)\b/.test(l.text)).map((l) => l.text).join(' ')));
   let cSeen = 0;
   for (let i = 0; i < toks.length - 2; i++) {
     const lab = toks[i].toLowerCase().replace(/[^a-z]/g, '');
@@ -235,6 +366,7 @@ export function parseBlock(lines) {
     let key = { s: 'str', d: 'dex', w: 'wis', i: 'int', l: 'int' }[lab[0]];
     if (lab[0] === 'c') key = lab[1] === 'o' ? 'con' : 'hxn'.includes(lab[1]) ? 'cha' : cSeen ? 'cha' : 'con';
     // An unreadable or duplicate label ("l9ts" for Wis) is most likely the score still missing.
+    if (key && m.abilities[key] != null && toks[i].toLowerCase().startsWith(key)) continue; // already read by the first pass
     if (!key || m.abilities[key] != null) key = ABIL.find((k) => m.abilities[k] == null);
     if (!key) continue;
     if (key === 'con' || key === 'cha') cSeen++;
@@ -281,6 +413,7 @@ export function parseBlock(lines) {
   for (const l of body) {
     const t = l.text;
     if (l.h >= 11.5 && /^[^a-z]*\d[^a-z]*$/.test(t)) continue; // art debris / page numbers
+    if (l.h > 0 && l.h < 6.5) continue; // tiny caption text under an illustration
     if (letters(t).length < 2 && !/\d/.test(t)) continue;
     const s = sectionOf(t);
     if (s) { sec = { name: s, entries: [] }; m.sections.push(sec); entry = null; prevEnded = true; continue; }
@@ -305,16 +438,25 @@ export function parseBlock(lines) {
 /** Split the whole book into stat blocks: [{ page, lines }]. */
 export function findBlocks(pages) {
   const stream = pages.flatMap(({ page, lines }) => lines.map((l) => ({ ...l, page })));
+  // Anchor on the HP line: it survives the OCR far better than the name or the type line.
+  const isHp = (t) => /^HP\s*['’.]?\s*[0-9A-Za-z]{1,4}(\s*[($]|\s*$)/.test(t); // "(" is sometimes scanned as "$\"
+  const isHeaderish = (t) => /MOD|SAVE|nitiative|^[Ss]peed\b|^AC\b/.test(t);
+  const isTitle = (l) => l.h >= 10.5 && letters(l.text).length >= 3 && !/^(AC|HP|MOD|[Ss]peed|[lI]nitiative)\b/.test(l.text) && !/\d/.test(l.text);
   const starts = [];
   for (let i = 1; i < stream.length; i++) {
-    if (isTypeLine(stream[i].text) && stream[i - 1].h >= 11 && letters(stream[i - 1].text).length >= 3) {
-      // The next few lines must look like a stat block header.
-      const ahead = stream.slice(i + 1, i + 8).map((l) => l.text).join(' ');
-      if (/\bAC\b|HP\s/.test(ahead)) starts.push(i - 1);
-    }
+    if (!isHp(stream[i].text)) continue;
+    if (!stream.slice(Math.max(0, i - 8), i + 10).some((l) => l !== stream[i] && isHeaderish(l.text))) continue;
+    const prevHp = starts.at(-1)?.hp ?? -1;
+    const floor = Math.max(prevHp, i - 9) + 1;
+    let type = -1;
+    for (let j = i - 1; j >= floor; j--) if (typeInfo(stream[j].text).size && stream[j].text.length < 70) { type = j; break; }
+    let name = type - 1 > prevHp ? type - 1 : -1;
+    if (name < 0) for (let j = (type >= 0 ? type : i) - 1; j >= floor; j--) if (isTitle(stream[j])) { name = j; break; }
+    if (name < 0) continue;
+    starts.push({ s: name, type, hp: i });
   }
-  return starts.map((s, k) => {
-    const limit = k + 1 < starts.length ? starts[k + 1] : stream.length;
+  return starts.map(({ s, type }, k) => {
+    const limit = k + 1 < starts.length ? starts[k + 1].s : stream.length;
     let end = s + 2;
     let pastCr = false;
     for (; end < limit; end++) {
@@ -324,9 +466,13 @@ export function findBlocks(pages) {
       const lt = letters(l.text).length;
       if (pastCr && l.h >= 15.5 && lt >= 4 && lt / l.text.replace(/\s/g, '').length >= 0.7 && !sectionOf(l.text)) break;
       if (pastCr && /^H\S*\s.*\bTreasure\b/.test(l.text)) { end = Math.max(s + 2, end - 2); break; }
+      // An all-caps line that is not a section header ("GOBLIN HEXER" lore heading, an art caption) ends the block.
+      if (pastCr && /^[A-Z][A-Z'’\-,. ]{5,}$/.test(l.text.trim()) && letters(l.text).length >= 6 && !sectionOf(l.text)) break;
       // Running footer ("ARCANALOTH 19") between pages.
     }
-    const lines = stream.slice(s, end).filter((l) => !/^[A-Z][A-Z'’\- ]{2,}\s+[0-9lIO ]{1,5}$/.test(l.text) && !/^[0-9lIO]{1,3}\s+[A-Z][A-Z'’\- ]{2,}$/.test(l.text));
+    // parseBlock expects [name, type, …]: give it an empty type line when the OCR lost it.
+    const raw = type === s + 1 ? stream.slice(s, end) : [stream[s], { text: '', h: 0, page: stream[s].page }, ...stream.slice(s + 1, end)];
+    const lines = raw.filter((l) => !/^[A-Z][A-Z'’\- ]{2,}\s+[0-9lIO ]{1,5}$/.test(l.text) && !/^[0-9lIO]{1,3}\s+[A-Z][A-Z'’\- ]{2,}$/.test(l.text));
     // A drop-cap name splits into two lines ("Ar" + "rcrENT BLAcK DRAGoN").
     const pre = stream[s - 1];
     if (pre && pre.h >= 11 && letters(pre.text).length <= 3 && pre.page === stream[s].page) lines[0] = { ...lines[0], text: `${pre.text}${lines[0].text}` };
@@ -382,9 +528,8 @@ export function wordFixer(vocab) {
     .replace(/[A-Za-z]{5,}/g, fixWord);
 }
 
-/** Whole pipeline: bbox html of the book + layout text of its index pages → [monster]. */
-export function parseMonsterManual(html, indexText, listText = '') {
-  const pages = pageLines(html);
+/** Whole pipeline: the book's page lines (pageLines / OCR json) + text of its index and list pages → [monster]. */
+export function parseMonsterManual(pages, indexText, listText = '') {
   const book = bookPages(pages);
   const vocab = bookVocab(pages);
   const seenNames = new Set();
@@ -393,8 +538,25 @@ export function parseMonsterManual(html, indexText, listText = '') {
   const blocks = findBlocks(pages.slice(8));
   const fix = wordFixer(vocab);
   // Match stat blocks to index names: by page (±2) and similarity of the garbled heading, best pairs first.
-  const parsed = blocks.map((b) => ({ b, m: parseBlock(b.lines), bp: book[b.page - 1] }));
-  const score = (g, name) => similarity(g, name) + (letters(g)[0] === letters(name)[0] ? 0.15 : 0) - 0.04 * Math.abs(letters(g).length - letters(name).length);
+  const parsed = blocks.map((b) => {
+    const m = parseBlock(b.lines);
+    // A sentence where the heading should be ("their ends.", "consumed by the lich. A Humanoid…") means it was lost.
+    const prose = /\b[a-z]{2,}\s+[a-z]{2,}\b/.test(m.garbled) || /^[a-z].*\.$/.test(m.garbled.trim());
+    m.garbled = prose ? '' : cleanHeading(m.garbled);
+    return { b, m, bp: book[b.page - 1] };
+  });
+  // Exact spelling counts most (clean OCR: "GHAST" is the Ghast, not the Ghost); look-alikes rescue garbled text.
+  const score = (g, name) => { const f = nameFit(g, name); return f <= 0 ? 0 : 0.6 * similarity(g, name) + 0.4 * f - 0.03 * Math.abs(letters(g).length - letters(name).length); };
+  const nameOf = new Map();
+  const usedE = new Set();
+  // Clean OCR: a heading spelled like a known name (index or appendix lists) is that monster, wherever it is.
+  const known = [...new Set([...index.map((e) => e.name), ...parseNameList(`${listText}\n${indexText}`).map((n) => repairName(n, vocab))])];
+  const exact = [];
+  parsed.forEach((p, bi) => { if (letters(p.m.garbled).length >= 3) known.forEach((n) => { const sim = similarity(p.m.garbled, n); if (sim >= 0.88) exact.push({ bi, n, sim }); }); });
+  exact.sort((x, y) => y.sim - x.sim);
+  const usedNames = new Set();
+  for (const e of exact) if (!nameOf.has(e.bi) && !usedNames.has(e.n)) { nameOf.set(e.bi, e.n); usedNames.add(e.n); }
+  index.forEach((e, ei) => { if (usedNames.has(e.name)) usedE.add(ei); });
   const pairs = [];
   // Index page numbers are OCR too: "56" can be 36. One look-alike digit off counts as close.
   const LOOK = { 3: '58', 5: '36', 8: '036', 6: '58', 0: '86', 1: '7', 7: '1' };
@@ -406,58 +568,153 @@ export function parseMonsterManual(html, indexText, listText = '') {
     return diff.length === 1 && (LOOK[diff[0][0]] || '').includes(diff[0][1]) ? 1.5 : null;
   };
   parsed.forEach((p, bi) => index.forEach((e, ei) => {
+    if (nameOf.has(bi) || usedE.has(ei)) return;
     const dp = pageClose(e.page, p.bp);
     const sc = score(p.m.garbled, e.name);
     if (dp != null) pairs.push({ bi, ei, s: sc - 0.05 * dp });
-    else if (sc >= 0.75) pairs.push({ bi, ei, s: sc - 0.3 }); // a near-exact name anywhere in the book
+    else if (sc >= 0.92) pairs.push({ bi, ei, s: sc - 0.3 }); // a near-exact name anywhere in the book
   }));
   pairs.sort((x, y) => y.s - x.s);
-  const nameOf = new Map();
-  const usedE = new Set();
-  for (const pr of pairs) if (pr.s >= 0.25 && !nameOf.has(pr.bi) && !usedE.has(pr.ei)) { nameOf.set(pr.bi, index[pr.ei].name); usedE.add(pr.ei); }
+  for (const pr of pairs) if (pr.s >= 0.5 && !nameOf.has(pr.bi) && !usedE.has(pr.ei)) { nameOf.set(pr.bi, index[pr.ei].name); usedE.add(pr.ei); }
+  // A heading lost to the artwork ("I", "m"): if exactly one unclaimed index entry belongs on that page, it is this one.
+  parsed.forEach((p, bi) => {
+    if (nameOf.has(bi)) return;
+    const free = index.map((e, ei) => ({ e, ei })).filter(({ e, ei }) => !usedE.has(ei) && Math.abs(e.page - p.bp) <= 1);
+    const sameBlocks = parsed.filter((q, qi) => !nameOf.has(qi) && Math.abs(q.bp - p.bp) <= 1).length;
+    if (free.length === 1 && sameBlocks === 1) { nameOf.set(bi, free[0].e.name); usedE.add(free[0].ei); }
+  });
+  // Still unnamed blocks whose heading is mostly debris: an unclaimed index entry on the very same page is the
+  // best guess (several → the best fit). A wrong-ish name with the right page beats "Kpnlzrr".
+  const weak = (bi) => !nameOf.has(bi) && (letters(parsed[bi].m.garbled).length < 4 || !/[aeiouy]{1}.*[aeiouy]/i.test(rebuildName(parsed[bi].m.garbled, vocab)));
+  const samePage = [];
+  parsed.forEach((p, bi) => { if (weak(bi)) index.forEach((e, ei) => { if (!usedE.has(ei) && e.page === p.bp) samePage.push({ bi, ei, s: nameFit(p.m.garbled, e.name) }); }); });
+  samePage.sort((x, y) => y.s - x.s);
+  for (const pr of samePage) if (!nameOf.has(pr.bi) && !usedE.has(pr.ei)) { nameOf.set(pr.bi, index[pr.ei].name); usedE.add(pr.ei); }
   // Blocks the index could not name: try the appendix name lists (no pages, so a stricter match).
   const taken = new Set(nameOf.values());
-  const extra = parseNameList(listText).map((n) => repairName(n, vocab)).filter((n) => !taken.has(n));
+  const extra = parseNameList(`${listText}\n${indexText}`).map((n) => repairName(n, vocab)).filter((n) => !taken.has(n));
   const pairs2 = [];
   parsed.forEach((p, bi) => { if (!nameOf.has(bi)) extra.forEach((n, ni) => pairs2.push({ bi, ni, s: score(p.m.garbled, n) })); });
   pairs2.sort((x, y) => y.s - x.s);
   const usedN = new Set();
   for (const pr of pairs2) {
     const g = letters(parsed[pr.bi].m.garbled);
-    if (pr.s >= 0.45 && g[0] === letters(extra[pr.ni])[0] && !nameOf.has(pr.bi) && !usedN.has(pr.ni)) { nameOf.set(pr.bi, extra[pr.ni]); usedN.add(pr.ni); }
+    if (pr.s >= 0.6 && g[0] === letters(extra[pr.ni])[0] && !nameOf.has(pr.bi) && !usedN.has(pr.ni)) { nameOf.set(pr.bi, extra[pr.ni]); usedN.add(pr.ni); }
   }
   const out = [];
   parsed.forEach(({ m, bp }, bi) => {
     if (m.ac == null && m.hp == null) return; // a sidebar or list that merely looked like a stat block
-    const name = cleanName(nameOf.get(bi) || titleCase(fixText(m.garbled).replace(/[^A-Za-z' -]/g, '').replace(/^[\s'-]+/, '')), vocab) || 'Unknown Monster';
+    let name = cleanName(nameOf.get(bi) || rebuildName(m.garbled, vocab), vocab);
+    if (letters(name).length < 3) name = `Unknown monster (p. ${bp})`; // heading lost to the artwork: the page helps find it
     const { garbled, ...rest } = m;
     for (const sec of rest.sections) for (const e of sec.entries) { e.name = fix(e.name.replace(/^([a-z]{1,2}|[A-Za-z]{1,2}\s)\s*(?=[A-Z])/, '')); e.text = fix(e.text); }
     for (const k of ['speed', 'skills', 'vulnerabilities', 'resistances', 'immunities', 'gear', 'senses', 'languages']) if (rest[k]) rest[k] = fix(rest[k]);
-    out.push({ index: `mm-${slug(name)}`, name, page: bp, ...rest, source: 'MM' });
+    out.push({ index: `mm-${slug(name)}`, name, page: bp, pdf_page: parsed[bi].b.page, ...rest, source: 'MM', _bi: bi });
   });
+  out.known = known;
+  // One name, one block: the block nearest that name's index page keeps it; the others fall back to their own heading.
+  const pageOf = new Map(index.map((e) => [e.name, e.page]));
+  const byName = new Map();
+  out.forEach((m, i) => byName.set(m.name, [...(byName.get(m.name) || []), i]));
+  for (const [name, list] of byName) {
+    if (list.length < 2 || !pageOf.has(name)) continue;
+    const keep = list.reduce((a, b) => (Math.abs(out[a].page - pageOf.get(name)) <= Math.abs(out[b].page - pageOf.get(name)) ? a : b));
+    for (const i of list) if (i !== keep) {
+      const n = cleanName(rebuildName(parsed[out[i]._bi].m.garbled, vocab), vocab);
+      out[i].name = n && n !== name && letters(n).length >= 3 ? n : `Unknown monster (p. ${out[i].page})`;
+      out[i].index = `mm-${slug(out[i].name)}`;
+    }
+  }
+  for (const m of out) delete m._bi;
   // Unique indexes (two stat blocks can share a name, e.g. variants).
+  const seen = new Map();
+  for (const m of out) { const n = seen.get(m.index) || 0; seen.set(m.index, n + 1); if (n) m.index += `-${n + 1}`; }
+  const sorted = out.sort((a, b) => a.name.localeCompare(b.name));
+  Object.defineProperty(sorted, 'knownNames', { value: out.known, enumerable: false });
+  Object.defineProperty(sorted, 'indexEntries', { value: index, enumerable: false });
+  return sorted;
+}
+
+// ---------- ChatGPT fixes ----------
+/**
+ * Merge stat blocks that ChatGPT transcribed from page images (`make mm-fix`) into the parsed ones: per PDF page,
+ * a transcription replaces the header values and name of the block it matches (same HP / AC / name), and its
+ * sections when it has at least as many entries. Blocks the parser missed altogether are added.
+ */
+export function applyFixes(monsters, fixes) {
+  const out = monsters.map((m) => ({ ...m }));
+  for (const [pdfPage, list] of Object.entries(fixes?.pages || {})) {
+    const here = out.filter((m) => String(m.pdf_page) === String(pdfPage));
+    const bookPage = here[0]?.page ?? Number(pdfPage) - 3;
+    const used = new Set();
+    for (const f of list || []) {
+      if (!f?.name) continue;
+      let best = null;
+      for (const m of here) {
+        if (used.has(m)) continue;
+        const sc = (f.hp != null && f.hp === m.hp ? 2 : 0) + (f.ac != null && f.ac === m.ac ? 1 : 0) + similarity(f.name, m.name);
+        if ((f.hp === m.hp || similarity(f.name, m.name) >= 0.8) && (!best || sc > best.sc)) best = { m, sc };
+      }
+      const t = best?.m || { page: bookPage, pdf_page: Number(pdfPage), abilities: {}, saves: {}, sections: [], source: 'MM' };
+      if (best) used.add(t); else out.push(t);
+      const name = f.name.trim().toLowerCase().replace(/(^|[\s(-])([a-z])/g, (_, a, b) => a + b.toUpperCase()).replace(/\b(Of|The|And)\b/g, (w) => w.toLowerCase());
+      Object.assign(t, { name, index: `mm-${slug(name)}`, ...typeInfo(f.type || t.type || '') });
+      for (const k of ['ac', 'initiative', 'hp', 'xp', 'pb']) if (Number.isFinite(f[k])) t[k] = f[k];
+      for (const k of ['hp_dice', 'speed', 'skills', 'vulnerabilities', 'resistances', 'immunities', 'gear', 'senses', 'languages', 'cr']) if (f[k]) t[k] = String(f[k]);
+      if (f.type) t.type = f.type;
+      for (const a of ABIL) if (Number.isFinite(f.abilities?.[a])) t.abilities = { ...t.abilities, [a]: f.abilities[a] };
+      t.abilities = Object.fromEntries(ABIL.filter((a) => t.abilities?.[a] != null).map((a) => [a, t.abilities[a]]));
+      // Only real proficiencies count as saves (a save equal to the modifier is just the modifier).
+      const saves = {};
+      for (const a of ABIL) if (Number.isFinite(f.saves?.[a]) && t.abilities[a] != null && f.saves[a] !== Math.floor((t.abilities[a] - 10) / 2)) saves[a] = f.saves[a];
+      if (Object.keys(saves).length || ABIL.every((a) => Number.isFinite(f.saves?.[a]))) t.saves = saves;
+      const count = (secs) => (secs || []).reduce((n, x) => n + (x.entries?.length || 0), 0);
+      if (count(f.sections) >= count(t.sections)) t.sections = (f.sections || []).filter((x) => x.entries?.length);
+      t.fixed = true;
+    }
+  }
   const seen = new Map();
   for (const m of out) { const n = seen.get(m.index) || 0; seen.set(m.index, n + 1); if (n) m.index += `-${n + 1}`; }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Layout-ish text of some PDF pages from page lines (for the index and appendix lists). */
+const pagesText = (pages, from, to) => pages.filter((p) => p.page >= from && p.page <= to).flatMap((p) => p.lines.map((l) => l.text)).join('\n');
+
 let cached = null;
-/** Monster Manual stat blocks, or [] without the PDF. Parsed once and cached in DATA_DIR. */
+/**
+ * Monster Manual stat blocks, or [] without the book. Parsed once and cached in DATA_DIR. Text comes from our own
+ * column-by-column Tesseract OCR (`make mm-ocr` → MM_OCR_JSON) when present, else from the scan's built-in text layer.
+ */
 export function loadMonsters(dataDir) {
   if (cached) return cached;
   cached = [];
-  const pdf = process.env.MM_PDF || path.resolve('..', 'D&D 5e - Monster Manual 2024.pdf');
-  const cache = dataDir && path.join(dataDir, 'mm-monsters-v1.json'); // bump the version when the parser improves
+  const usable = (f) => f && fs.existsSync(f) && fs.statSync(f).size > 0; // /dev/null is mounted when a file is missing
+  const ocr = process.env.MM_OCR_JSON || path.resolve('..', 'Monster Manual 2024 - OCR.json');
+  const fixFile = process.env.MM_FIXES_JSON || path.resolve('..', 'Monster Manual 2024 - ChatGPT fixes.json');
+  const fixes = usable(fixFile) ? JSON.parse(fs.readFileSync(fixFile, 'utf8')) : null;
+  const nFix = Object.keys(fixes?.pages || {}).length;
+  const book = process.env.MM_PDF || path.resolve('..', 'D&D 5e - Monster Manual 2024.pdf');
+  const src = usable(ocr) ? 'ocr' : usable(book) ? 'scan' : null;
+  // Bump the version when the parser improves; the source is part of the name so adding the OCR re-parses.
+  const cache = dataDir && src && path.join(dataDir, `mm-monsters-v3-${src}${nFix ? `-fix${nFix}` : ''}.json`);
   try {
-    if (cache && fs.existsSync(cache)) return (cached = JSON.parse(fs.readFileSync(cache, 'utf8')));
-    if (!fs.existsSync(pdf) || fs.statSync(pdf).size === 0) return cached; // no book (or /dev/null mounted in its place)
-    const html = execFileSync('pdftotext', ['-bbox-layout', pdf, '-'], { maxBuffer: 256 * 1024 * 1024 }).toString();
-    // The "Index of Stat Blocks" sits on the first PDF pages; layout mode keeps "Name.....page" on one line.
-    const indexText = execFileSync('pdftotext', ['-layout', '-f', '5', '-l', '10', pdf, '-'], { maxBuffer: 16 * 1024 * 1024 }).toString();
-    // Appendix B lists every stat block by habitat, creature type and CR: a second source of clean names.
-    const listText = execFileSync('pdftotext', ['-layout', '-f', '376', '-l', '390', pdf, '-'], { maxBuffer: 16 * 1024 * 1024 }).toString();
-    cached = parseMonsterManual(html, indexText, listText);
-    if (cache) { fs.mkdirSync(dataDir, { recursive: true }); fs.writeFileSync(cache, JSON.stringify(cached)); }
+    if (!src) return cached;
+    if (fs.existsSync(cache)) return (cached = JSON.parse(fs.readFileSync(cache, 'utf8')));
+    if (src === 'ocr') {
+      const { pages } = JSON.parse(fs.readFileSync(ocr, 'utf8'));
+      cached = parseMonsterManual(pages, pagesText(pages, 5, 10), pagesText(pages, 376, 390));
+    } else {
+      const html = execFileSync('pdftotext', ['-bbox-layout', book, '-'], { maxBuffer: 256 * 1024 * 1024 }).toString();
+      // The "Index of Stat Blocks" sits on the first PDF pages; layout mode keeps "Name.....page" on one line.
+      const indexText = execFileSync('pdftotext', ['-layout', '-f', '5', '-l', '10', book, '-'], { maxBuffer: 16 * 1024 * 1024 }).toString();
+      // Appendix B lists every stat block by habitat, creature type and CR: a second source of clean names.
+      const listText = execFileSync('pdftotext', ['-layout', '-f', '376', '-l', '390', book, '-'], { maxBuffer: 16 * 1024 * 1024 }).toString();
+      cached = parseMonsterManual(pageLines(html), indexText, listText);
+    }
+    if (fixes) cached = applyFixes(cached, fixes);
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(cache, JSON.stringify(cached));
   } catch (e) {
     console.warn('Monster Manual extraction failed:', e.message);
   }

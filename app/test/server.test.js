@@ -6,6 +6,8 @@ import path from 'node:path';
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dnd-test-'));
 process.env.MM_PDF = '/nonexistent/monster-manual.pdf'; // tests never depend on the owner's book
+process.env.MM_OCR_JSON = '/nonexistent/monster-manual-ocr.json';
+process.env.MM_FIXES_JSON = '/nonexistent/monster-manual-fixes.json';
 const { openDb } = await import('../server/db.js');
 const { createApp, createAdminApp } = await import('../server/index.js');
 const { isTrustedAdminRequest } = await import('../server/routes/admin.js');
@@ -237,6 +239,25 @@ test('DM tools: monsters on the field and notes/announcements are DM-only, share
   assert.equal((await alice.get(`/api/campaigns/${partyId}/notes`)).body.length, 2);
   await alice.del(`/api/campaigns/${partyId}/notes/${secret}`);
   assert.equal((await alice.get(`/api/campaigns/${partyId}/notes`)).body.length, 1);
+});
+
+test('field monsters: raising max HP heals by the same amount, stat-block edits stay on the slot', async () => {
+  const id = (await alice.post(`/api/campaigns/${partyId}/field`, { monster: { name: 'Ogre', hp: 59, ac: 11, speed: '40 ft.' } })).body.ids[0];
+  const get = async () => (await alice.get(`/api/campaigns/${partyId}/field`)).body.find((f) => f.id === id);
+  await alice.patch(`/api/campaigns/${partyId}/field/${id}`, { damage: 20 });
+  await alice.patch(`/api/campaigns/${partyId}/field/${id}`, { hp_max: 69 });
+  assert.deepEqual([(await get()).hp, (await get()).hp_max], [49, 69], '39 + 10');
+  await alice.patch(`/api/campaigns/${partyId}/field/${id}`, { hp_max: 30 });
+  assert.equal((await get()).hp, 30, 'lowering max caps current HP');
+  await alice.patch(`/api/campaigns/${partyId}/field/${id}`, { monster: { speed: '50 ft.', abilities: { str: 21, dex: 'x' }, sections: [{ name: 'Actions', entries: [{ name: 'Club', text: '+7 to hit' }, { name: '', text: '' }] }], evil: 'nope' } });
+  const m = (await get()).monster;
+  assert.equal(m.speed, '50 ft.');
+  assert.deepEqual(m.abilities, { str: 21 });
+  assert.deepEqual(m.sections, [{ name: 'Actions', entries: [{ name: 'Club', text: '+7 to hit' }] }]);
+  assert.equal(m.evil, undefined);
+  assert.equal(m.name, 'Ogre');
+  assert.ok(m.edited);
+  await alice.del(`/api/campaigns/${partyId}/field/${id}`);
 });
 
 test('resource actions go through rules and land in history', async () => {

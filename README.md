@@ -90,6 +90,20 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
 
 All PDFs are git-ignored: keep them next to the app, never commit them.
 
+### Monster Manual OCR (recommended)
+
+The scan's own text layer is poor OCR, which produces garbled names and missing scores. Two one-time
+commands give a much cleaner catalog:
+
+1. `make mm-ocr` re-reads every page column by column with Tesseract in Docker (about 7 minutes) and
+   writes `Monster Manual 2024 - OCR.json`.
+2. `make mm-fix` (app running, ChatGPT linked under Admin → AI) sends only the pages whose stat
+   blocks still came out incomplete to ChatGPT through Codex, about 110 page images (~17k tokens each),
+   one at a time. It writes `Monster Manual 2024 - ChatGPT fixes.json`. ChatGPT's per-hour limits may
+   pause it; the script waits and retries, and you can stop it and run it again to resume.
+
+Then `make up` again. Both files are the book's text, so they are git-ignored too.
+
 ## Usage
 
 Start:
@@ -177,6 +191,7 @@ Everything has defaults; copy `.env.example` to `.env` to change them.
 | `ADMIN_PASSWORD` | empty | Optional extra password for the admin back door |
 | `PHB_PDF` | `./PHB-5e.pdf` | PHB PDF used for the rules search |
 | `MM_PDF` | `./D&D 5e - Monster Manual 2024.pdf` | Monster Manual PDF for the DM's monster catalog (optional) |
+| `MM_OCR_JSON` / `MM_FIXES_JSON` | `./Monster Manual 2024 - OCR.json` / `… - ChatGPT fixes.json` | Output of `make mm-ocr` / `make mm-fix` (optional) |
 | `AI_TIMEOUT_MS` | `240000` | Max time per assistant request |
 
 ## Data
@@ -203,7 +218,6 @@ Everything lives in the Docker volume `dnd-table_dnd-data` (SQLite database + Co
   is fine for a handful of players.
 - PHB content outside the SRD (most subclass features, most feats) appears by name only; type
   the details in, or ask the assistant to look them up in your PHB.
-- The Monster Manual is an OCR scan. About 400 stat blocks are read; names come from the book's
-  index, and HP is checked against its dice, but a few names stay garbled and some blocks miss a
-  score or carry an OCR typo. Rename or adjust a monster on the field, and check the book (the page is
-  shown) when it matters.
+- The Monster Manual is a scan. With `make mm-ocr` + `make mm-fix`, nearly all ~490 stat blocks are
+  read cleanly. Without them, names and scores come from the scan's poor OCR. Either way, rename or
+  adjust a monster on the field, and check the book when it matters: the page is shown.
