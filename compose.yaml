@@ -1,0 +1,30 @@
+name: dnd-table
+
+services:
+  app:
+    build: ./app
+    image: dnd-table:latest
+    restart: unless-stopped
+    ports:
+      # Main app — reachable on the LAN; point `tailscale serve` / `tailscale funnel` at this port.
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8590}:3000"
+      # Admin back door — the app itself refuses Tailscale (100.64.0.0/10) and anything outside ADMIN_ALLOWED_CIDRS.
+      - "${ADMIN_BIND:-0.0.0.0}:${ADMIN_PORT:-8591}:3001"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-240000}
+    volumes:
+      - dnd-data:/data
+      - type: bind
+        source: ${PHB_PDF:-./PHB-5e.pdf}
+        target: /reference/PHB-5e.pdf
+        read_only: true
+      # Official 2024 character sheet: used for the PDF download and the blank-sheet download.
+      - type: bind
+        source: ${SHEET_PDF:-./DnD_2024_Character-Sheet.pdf}
+        target: /reference/DnD_2024_Character-Sheet.pdf
+        read_only: true
+
+volumes:
+  dnd-data:

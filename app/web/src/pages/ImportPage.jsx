@@ -1,0 +1,71 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api, resizeImage } from '../api.js';
+import { ErrorBox, useAction, useApp } from '../components/ui.jsx';
+import { derived, signed, ABILITIES } from '../../../shared/rules.js';
+
+export default function ImportPage() {
+  const { aiEnabled, campaigns, campaign } = useApp();
+  const nav = useNavigate();
+  const [images, setImages] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [partyId, setPartyId] = useState(campaign?.id || '');
+  const [run, busy, error] = useAction();
+  const add = async (files) => {
+    const list = await Promise.all([...files].slice(0, 4).map((f) => resizeImage(f, 2000, 0.88)));
+    setImages((prev) => [...prev, ...list].slice(0, 4));
+  };
+  const x = draft ? derived(draft) : null;
+  return (
+    <div className="stack" style={{ maxWidth: 900 }}>
+      <h1>Import a paper character sheet</h1>
+      {!aiEnabled && <div className="notice">The AI assistant is turned off. An admin can enable it under Admin → AI assistant.</div>}
+      <div className="card stack">
+        <p>Take a photo of each page (or upload scans). The assistant reads it with vision and fills in a draft. Nothing is saved until you check it and press <b>Create</b>.</p>
+        <div className="row">
+          <label className="btn primary">📷 Take photo<input type="file" accept="image/*" capture="environment" hidden onChange={(e) => add(e.target.files)} /></label>
+          <label className="btn">🖼 Upload images<input type="file" accept="image/*" multiple hidden onChange={(e) => add(e.target.files)} /></label>
+          <span className="muted small">Up to 4 pages.</span>
+        </div>
+        {images.length > 0 && (
+          <div className="row">
+            {images.map((src, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                <img src={src} alt={`page ${i + 1}`} style={{ height: 140, borderRadius: 8, border: '1px solid var(--line)' }} />
+                <button className="small" style={{ position: 'absolute', top: 4, right: 4 }} onClick={() => setImages(images.filter((_, j) => j !== i))}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <ErrorBox error={error} />
+        <div className="row end">
+          <button className="primary" disabled={!images.length || busy || !aiEnabled} onClick={() => run(async () => setDraft((await api.post('/characters/import-image', { images })).data))}>
+            {busy ? 'Reading the sheet… (can take a minute)' : 'Read sheet'}
+          </button>
+        </div>
+      </div>
+      {draft && (
+        <div className="card stack">
+          <h2>Check the result</h2>
+          <div className="grid two">
+            <div><label>Name</label><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
+            <div><label>Party</label><select value={partyId} onChange={(e) => setPartyId(e.target.value)}><option value="">Private</option>{campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+          </div>
+          <div className="muted">{draft.race?.name} {draft.subrace?.name && `(${draft.subrace.name})`} · {draft.classes.map((c) => `${c.name} ${c.level}`).join(' / ')} · {draft.background?.name}</div>
+          <div className="abilities">{ABILITIES.map((a) => (
+            <div key={a} className="ability"><div className="name">{a.toUpperCase()}</div>
+              <input type="number" value={draft.abilities[a]} onChange={(e) => setDraft({ ...draft, abilities: { ...draft.abilities, [a]: Number(e.target.value) } })} />
+              <div className="muted">{signed(x.mods[a])}</div></div>
+          ))}</div>
+          <div className="small">HP {draft.hp.current}/{draft.hp.max} · AC {draft.ac} · {Object.keys(draft.skills).length} skills · {draft.spells.length} spells · {draft.equipment.length} items · {draft.features.length} features</div>
+          {draft.notes && <div className="notice small pre">{draft.notes}</div>}
+          <p className="muted small">Everything else can be fixed on the sheet after creating — it all stays editable and versioned.</p>
+          <div className="row end"><button className="primary" disabled={busy || !draft.name} onClick={() => run(async () => {
+            const r = await api.post('/characters', { data: draft, kind: 'import', campaign_id: partyId || null });
+            nav(`/characters/${r.id}`);
+          })}>Create character</button></div>
+        </div>
+      )}
+    </div>
+  );
+}
