@@ -5,21 +5,21 @@ import { ErrorBox, Modal, useAction, useApp, useLoad, NeedParty, fmtDay } from '
 
 const imgUrl = (cid, id) => `/api/campaigns/${cid}/log-images/${id}`;
 
-/** Text with [img3] references turned into clickable picture chips. */
-function LogText({ text, images, cid, onOpen }) {
+/** Text with [img3] references turned into clickable picture chips (`url` maps a picture to its address). */
+export function LogText({ text, images, cid, onOpen, url = (img) => imgUrl(cid, img.id), where = 'session' }) {
   const parts = String(text || '').split(/(\[img\s*\d+\])/gi);
   return parts.map((p, i) => {
     const m = /^\[img\s*(\d+)\]$/i.exec(p);
     if (!m) return <span key={i}>{p}</span>;
     const img = images.find((x) => x.n === Number(m[1]));
     return img
-      ? <button key={i} className="img-ref" onClick={() => onOpen(img)} title={`Picture ${img.n}`}><img src={imgUrl(cid, img.id)} alt="" />img{img.n}</button>
-      : <span key={i} className="badge red" title="No picture with that number in this session">{p}</span>;
+      ? <button key={i} className="img-ref" onClick={() => onOpen(img)} title={`Picture ${img.n}`}><img src={url(img)} alt="" />img{img.n}</button>
+      : <span key={i} className="badge red" title={`No picture with that number in this ${where}`}>{p}</span>;
   });
 }
 
 /** Read image files (picker, paste or drop) as downscaled data URLs. */
-const readImages = (files) => Promise.all([...files].filter((f) => f.type.startsWith('image/')).slice(0, 10).map((f) => resizeImage(f, 1800, 0.85)));
+export const readImages = (files) => Promise.all([...files].filter((f) => f.type.startsWith('image/')).slice(0, 10).map((f) => resizeImage(f, 1800, 0.85)));
 
 const Speech = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
 

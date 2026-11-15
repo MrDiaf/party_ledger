@@ -1,13 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { ErrorBox, useAction, useApp, useLoad, NeedParty, fmtDate } from '../components/ui.jsx';
+import { ErrorBox, Modal, useAction, useApp, useLoad, NeedParty, fmtDate } from '../components/ui.jsx';
+import { LogText, readImages } from './LogsPage.jsx';
+
+const noteImgUrl = (cid, id) => `/api/campaigns/${cid}/note-images/${id}`;
+
+/** A note's pictures as numbered thumbnails; tap one to see it large (the DM can also remove it or refer to it). */
+function NotePictures({ cid, note, onRemove, onRefer, viewer, setViewer }) {
+  const images = note.images || [];
+  return (
+    <>
+      {images.length > 0 && (
+        <div className="log-pics">
+          {images.map((i) => (
+            <div key={i.id} className="log-pic">
+              <img src={noteImgUrl(cid, i.id)} alt="" onClick={() => setViewer(i)} style={{ cursor: 'zoom-in' }} />
+              <span>img{i.n}</span>
+              {onRemove && <button className="ghost small" title="Remove picture" onClick={() => onRemove(i)}>✕</button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {viewer && (
+        <Modal title={`Picture ${viewer.n}`} onClose={() => setViewer(null)} wide>
+          <img className="viewer-img" src={noteImgUrl(cid, viewer.id)} alt={`Picture ${viewer.n}`} />
+          <div className="row between" style={{ marginTop: 10 }}>
+            <span className="muted small">{onRefer ? `Write [img${viewer.n}] anywhere in the note to point at this picture.` : note.title}</span>
+            <div className="row">
+              <a className="btn small" href={noteImgUrl(cid, viewer.id)} download={`${note.title}-img${viewer.n}`}>Download</a>
+              {onRefer && <button className="primary small" onClick={() => { onRefer(viewer.n); setViewer(null); }}>Refer to it in the note</button>}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 /** One note's editor (DM). Saves itself a moment after you stop typing, and when you leave it. */
 function NoteEditor({ cid, note, onSaved, onDeleted }) {
   const [f, setF] = useState({ title: note.title, body: note.body });
   const [status, setStatus] = useState('');
   const [run, busy, err] = useAction();
+  const [viewer, setViewer] = useState(null);
+  const area = useRef(null);
   const timer = useRef(null);
   const latest = useRef(f);
   latest.current = f;
@@ -25,6 +62,22 @@ function NoteEditor({ cid, note, onSaved, onDeleted }) {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => run(save), 900);
   };
+  /** Insert "[imgN]" at the cursor (or the end) and save. */
+  const refer = (ns) => {
+    const el = area.current;
+    const at = el && document.activeElement === el ? el.selectionStart : latest.current.body.length;
+    const body = latest.current.body;
+    const ins = `${at && !/\s$/.test(body.slice(0, at)) ? ' ' : ''}${ns.map((n) => `[img${n}]`).join(' ')} `;
+    edit('body')({ target: { value: body.slice(0, at) + ins + body.slice(at) } });
+  };
+  const addPictures = (files) => run(async () => {
+    const urls = await readImages(files);
+    if (!urls.length) return;
+    setStatus('Uploading pictures…');
+    const r = await api.post(`/campaigns/${cid}/notes/${note.id}/images`, { images: urls });
+    refer(r.images.map((i) => i.n));
+    await onSaved();
+  });
   // Flush on switching tabs / leaving the page.
   useEffect(() => () => { if (timer.current) { clearTimeout(timer.current); api.patch(`/campaigns/${cid}/notes/${note.id}`, latest.current).catch(() => {}); } }, [cid, note.id]);
 
@@ -42,8 +95,17 @@ function NoteEditor({ cid, note, onSaved, onDeleted }) {
         <span className="grow" />
         <button className="small danger" disabled={busy} onClick={() => confirm(`Delete "${note.title}"?`) && run(async () => { clearTimeout(timer.current); timer.current = null; await api.del(`/campaigns/${cid}/notes/${note.id}`); onDeleted(); })}>Delete</button>
       </div>
-      <textarea className="note-body" value={f.body} onChange={edit('body')} onBlur={() => timer.current && run(save)}
+      <textarea ref={area} className="note-body" value={f.body} onChange={edit('body')} onBlur={() => timer.current && run(save)}
+        onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); addPictures(e.clipboardData.files); } }}
+        onDragOver={(e) => e.preventDefault()} onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); addPictures(e.dataTransfer.files); } }}
         placeholder={note.shared ? 'Write your announcement. Players see it on the Overview and under Announcements.' : 'Plot threads, NPC secrets, encounter ideas… only you can see this.'} />
+      <div className="row">
+        <label className="btn small" htmlFor={`note-pics-${note.id}`} title="Add pictures (or paste / drop them into the note)">📎 Add pictures</label>
+        <input id={`note-pics-${note.id}`} type="file" accept="image/*" multiple hidden onChange={(e) => { addPictures(e.target.files); e.target.value = ''; }} />
+        <span className="muted small">Paste or drop pictures into the text too. Refer to one with [img1]{note.shared ? '. Players see them with the note.' : '.'}</span>
+      </div>
+      <NotePictures cid={cid} note={note} viewer={viewer} setViewer={setViewer} onRefer={(n) => refer([n])}
+        onRemove={(i) => confirm(`Remove picture ${i.n}?`) && run(async () => { await api.del(`/campaigns/${cid}/notes/${note.id}/images/${i.id}`); await onSaved(); })} />
       <ErrorBox error={err} />
     </div>
   );
@@ -57,6 +119,7 @@ export default function NotesPage() {
   const nav = useNavigate();
   const { data: notes, error, reload } = useLoad(() => (cid ? api.get(`/campaigns/${cid}/notes`) : Promise.resolve([])), [cid]);
   const [run, busy, actErr] = useAction();
+  const [viewer, setViewer] = useState(null);
   if (!cid) return <NeedParty />;
 
   const current = notes?.find((n) => String(n.id) === id) || notes?.[0];
@@ -94,7 +157,10 @@ export default function NotesPage() {
           <div className="card stack announcement">
             <h2 style={{ margin: 0 }}>{current.title}</h2>
             <div className="muted small">{current.author || 'DM'} · {fmtDate((current.published_at || current.updated_at) + 'Z')}</div>
-            <div className="pre">{current.body || <span className="muted">(empty)</span>}</div>
+            <div className="pre">{current.body
+              ? <LogText text={current.body} images={current.images || []} onOpen={setViewer} url={(i) => noteImgUrl(cid, i.id)} where="note" />
+              : <span className="muted">(empty)</span>}</div>
+            <NotePictures cid={cid} note={current} viewer={viewer} setViewer={setViewer} />
           </div>
         ))}
     </div>

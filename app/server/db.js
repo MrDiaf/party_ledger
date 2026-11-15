@@ -142,6 +142,14 @@ CREATE TABLE IF NOT EXISTS dm_notes (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   published_at TEXT
 );
+CREATE TABLE IF NOT EXISTS note_images (
+  id INTEGER PRIMARY KEY,
+  note_id INTEGER NOT NULL REFERENCES dm_notes(id) ON DELETE CASCADE,
+  n INTEGER NOT NULL,
+  mime TEXT NOT NULL,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS characters (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

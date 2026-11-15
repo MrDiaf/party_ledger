@@ -257,7 +257,35 @@ test('field monsters: raising max HP heals by the same amount, stat-block edits 
   assert.equal(m.evil, undefined);
   assert.equal(m.name, 'Ogre');
   assert.ok(m.edited);
+  // Duplicates keep the edits, max HP and AC, start at full HP, and number on from the original.
+  await alice.patch(`/api/campaigns/${partyId}/field/${id}`, { ac: 14, damage: 5, conditions: 'Prone' });
+  const dup = (await alice.post(`/api/campaigns/${partyId}/field/${id}/duplicate`, { count: 2 })).body.ids;
+  const all = (await alice.get(`/api/campaigns/${partyId}/field`)).body;
+  const copies = all.filter((f) => dup.includes(f.id));
+  assert.deepEqual(copies.map((c) => c.name), ['Ogre 2', 'Ogre 3']);
+  assert.deepEqual(copies.map((c) => [c.hp, c.hp_max, c.ac, c.conditions, c.monster.speed]), [[30, 30, 14, '', '50 ft.'], [30, 30, 14, '', '50 ft.']]);
+  for (const c of copies) await alice.del(`/api/campaigns/${partyId}/field/${c.id}`);
   await alice.del(`/api/campaigns/${partyId}/field/${id}`);
+});
+
+test('DM note pictures: DM-only until the note is shared', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const note = (await alice.post(`/api/campaigns/${partyId}/notes`, { title: 'Map', body: 'The cave [img1]' })).body.id;
+  assert.equal((await bob.post(`/api/campaigns/${partyId}/notes/${note}/images`, { images: [png] })).status, 403);
+  const up = await alice.post(`/api/campaigns/${partyId}/notes/${note}/images`, { images: [png, png] });
+  assert.deepEqual(up.body.images.map((i) => i.n), [1, 2]);
+  const img = up.body.images[0].id;
+  assert.equal((await alice.raw(`/api/campaigns/${partyId}/note-images/${img}`)).status, 200);
+  assert.equal((await bob.raw(`/api/campaigns/${partyId}/note-images/${img}`)).status, 404, 'hidden while the note is private');
+  await alice.patch(`/api/campaigns/${partyId}/notes/${note}`, { shared: true });
+  const r = await bob.raw(`/api/campaigns/${partyId}/note-images/${img}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('content-type'), 'image/png');
+  assert.equal((await eve.raw(`/api/campaigns/${partyId}/note-images/${img}`)).status, 403, 'non-members never');
+  assert.deepEqual((await bob.get(`/api/campaigns/${partyId}/notes`)).body.find((x) => x.id === note).images.map((i) => i.n), [1, 2]);
+  await alice.del(`/api/campaigns/${partyId}/notes/${note}/images/${img}`);
+  assert.equal((await alice.raw(`/api/campaigns/${partyId}/note-images/${img}`)).status, 404);
+  await alice.del(`/api/campaigns/${partyId}/notes/${note}`);
 });
 
 test('resource actions go through rules and land in history', async () => {

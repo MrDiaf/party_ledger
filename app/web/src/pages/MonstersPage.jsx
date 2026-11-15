@@ -269,6 +269,10 @@ function Slot({ s, cid, onChanged, onRemove }) {
       <div className="row">
         <button className="small ghost" onClick={() => setOpen((o) => !o)}>{open ? '▾ Hide stat block' : '▸ Stat block & notes'}</button>
         <span className="grow" />
+        <button className="small" title="Add more of this monster, edits included" onClick={() => {
+          const n = prompt(`How many more ${s.name.replace(/\s+\d+$/, '')}? (copies keep your edits and start at full HP)`, '1');
+          if (n && Number(n) > 0) run(async () => { await api.post(`/campaigns/${cid}/field/${s.id}/duplicate`, { count: Number(n) }); await onChanged(); });
+        }}>⧉ Duplicate</button>
         <button className="small" onClick={() => setEditing(true)}>✎ Edit</button>
       </div>
       {open && (

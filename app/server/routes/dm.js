@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { tx, DATA_DIR } from '../db.js';
 import { HttpError, h, str, requireUser, requireMember, requireDm } from '../core.js';
 import { loadMonsters } from '../monsterManual.js';
+import { decodeImage } from './party.js';
 
 const int = (v, d = null) => (v === '' || v == null || !Number.isFinite(Number(v)) ? d : Math.round(Number(v)));
 
@@ -42,16 +43,33 @@ export function addToField(db, user, campaignId, b) {
     m = { name: str(c.name, 120).trim(), ac: int(c.ac), hp: int(c.hp), type: str(c.type, 200), cr: str(c.cr, 10), speed: str(c.speed, 200), notes: str(c.notes, 4000), custom: true };
     if (!m.name) throw new HttpError(400, 'Give the monster a name');
   }
-  const count = Math.min(Math.max(int(b.count, 1), 1), 30);
-  const base = str(b.name, 120).trim() || m.name;
-  const existing = db.prepare('SELECT COUNT(*) n FROM field_monsters WHERE campaign_id = ? AND (name = ? OR name LIKE ?)').get(cid, base, `${base} %`).n;
-  const numbered = count > 1 || existing > 0;
+  return { ids: insertMonsters(db, cid, m, str(b.name, 120).trim() || m.name, int(b.count, 1)) };
+}
+
+/**
+ * Insert `count` copies of monster `m` named "<base>", or "<base> 2", "<base> 3"… continuing after the highest
+ * number already on the field. `extra` sets per-slot values (max HP, AC, notes) for duplicates.
+ */
+function insertMonsters(db, cid, m, base, count, extra = {}) {
+  count = Math.min(Math.max(count || 1, 1), 30);
+  const names = db.prepare('SELECT name FROM field_monsters WHERE campaign_id = ? AND (name = ? OR name LIKE ?)').all(cid, base, `${base} %`).map((r) => r.name);
+  const top = Math.max(0, ...names.map((n) => (n === base ? 1 : Number(n.slice(base.length + 1)) || 0)));
+  const numbered = count > 1 || top > 0;
   const sort = (db.prepare('SELECT MAX(sort) s FROM field_monsters WHERE campaign_id = ?').get(cid).s ?? 0) + 1;
+  const hp = extra.hp_max ?? m.hp ?? 0;
   const data = JSON.stringify(m);
-  const ids = tx(db, () => Array.from({ length: count }, (_, k) => Number(db.prepare(
-    'INSERT INTO field_monsters(campaign_id, monster_index, name, hp, hp_max, ac, sort, data) VALUES(?,?,?,?,?,?,?,?)',
-  ).run(cid, m.index || null, numbered ? `${base} ${existing + k + 1}` : base, m.hp ?? 0, m.hp ?? 0, m.ac ?? null, sort + k, data).lastInsertRowid)));
-  return { ids };
+  return tx(db, () => Array.from({ length: count }, (_, k) => Number(db.prepare(
+    'INSERT INTO field_monsters(campaign_id, monster_index, name, hp, hp_max, ac, notes, sort, data) VALUES(?,?,?,?,?,?,?,?,?)',
+  ).run(cid, m.index || null, numbered ? `${base} ${top + k + 1}` : base, hp, hp, extra.ac !== undefined ? extra.ac : m.ac ?? null, extra.notes ?? '', sort + k, data).lastInsertRowid)));
+}
+
+/** More of a monster already on the field, edits included: same stat block, max HP, AC and notes; fresh HP. */
+export function duplicateFieldMonster(db, user, campaignId, id, b) {
+  requireDm(db, user, campaignId);
+  const row = db.prepare('SELECT * FROM field_monsters WHERE id = ? AND campaign_id = ?').get(Number(id), Number(campaignId));
+  if (!row) throw new HttpError(404, 'Monster not on the field');
+  const base = row.name.replace(/\s+\d+$/, '');
+  return { ids: insertMonsters(db, row.campaign_id, JSON.parse(row.data || '{}'), base, int(b.count, 1), { hp_max: row.hp_max, ac: row.ac, notes: row.notes }) };
 }
 
 const ABIL = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
@@ -120,7 +138,46 @@ export function listNotes(db, user, campaignId) {
   return db.prepare(
     `SELECT n.*, u.display_name AS author FROM dm_notes n LEFT JOIN users u ON u.id = n.author_id
      WHERE n.campaign_id = ? ${all ? '' : 'AND n.shared = 1'} ORDER BY n.pinned DESC, n.sort, n.id`
-  ).all(Number(campaignId)).map((n) => ({ ...n, shared: !!n.shared, pinned: !!n.pinned }));
+  ).all(Number(campaignId)).map((n) => ({
+    ...n, shared: !!n.shared, pinned: !!n.pinned,
+    // pictures without their data (served by /note-images/:id), so [imgN] references resolve
+    images: db.prepare('SELECT id, n FROM note_images WHERE note_id = ? ORDER BY n').all(n.id),
+  }));
+}
+
+function dmNote(db, user, campaignId, id) {
+  requireDm(db, user, campaignId);
+  const n = db.prepare('SELECT * FROM dm_notes WHERE id = ? AND campaign_id = ?').get(Number(id), Number(campaignId));
+  if (!n) throw new HttpError(404, 'Note not found');
+  return n;
+}
+
+/** Add pictures to a note (DM). Numbered per note: refer to them in the text with [img1], [img2]… */
+export function addNoteImages(db, user, campaignId, noteId, images) {
+  const note = dmNote(db, user, campaignId, noteId);
+  const decoded = (images || []).slice(0, 10).map(decodeImage);
+  if (!decoded.length) throw new HttpError(400, 'No image');
+  return tx(db, () => {
+    let n = db.prepare('SELECT MAX(n) n FROM note_images WHERE note_id = ?').get(note.id).n || 0;
+    const out = decoded.map((img) => ({ n: ++n, id: Number(db.prepare('INSERT INTO note_images(note_id, n, mime, data) VALUES(?,?,?,?)').run(note.id, n, img.mime, img.data).lastInsertRowid) }));
+    db.prepare("UPDATE dm_notes SET updated_at = datetime('now') WHERE id = ?").run(note.id);
+    return { images: out };
+  });
+}
+
+export function deleteNoteImage(db, user, campaignId, noteId, imageId) {
+  const note = dmNote(db, user, campaignId, noteId);
+  db.prepare('DELETE FROM note_images WHERE id = ? AND note_id = ?').run(Number(imageId), note.id);
+  return { ok: true };
+}
+
+/** A note's picture: the DM always, players only when the note is shared. */
+export function getNoteImage(db, user, campaignId, imageId) {
+  const img = db.prepare('SELECT i.mime, i.data, n.campaign_id, n.shared FROM note_images i JOIN dm_notes n ON n.id = i.note_id WHERE i.id = ?').get(Number(imageId));
+  if (!img || img.campaign_id !== Number(campaignId)) throw new HttpError(404, 'Image not found');
+  const role = requireMember(db, user, campaignId);
+  if (role !== 'dm' && !img.shared) throw new HttpError(404, 'Image not found');
+  return img;
 }
 
 export function createNote(db, user, campaignId, b) {
@@ -158,11 +215,18 @@ export function dmRouter(db) {
   }));
   r.get('/campaigns/:cid/field', h((req) => listField(db, requireUser(req), req.params.cid)));
   r.post('/campaigns/:cid/field', h((req) => addToField(db, requireUser(req), req.params.cid, req.body)));
+  r.post('/campaigns/:cid/field/:id/duplicate', h((req) => duplicateFieldMonster(db, requireUser(req), req.params.cid, req.params.id, req.body)));
   r.patch('/campaigns/:cid/field/:id', h((req) => updateFieldMonster(db, requireUser(req), req.params.cid, req.params.id, req.body)));
   r.delete('/campaigns/:cid/field/:id', h((req) => removeFromField(db, requireUser(req), req.params.cid, req.params.id)));
   r.get('/campaigns/:cid/notes', h((req) => listNotes(db, requireUser(req), req.params.cid)));
   r.post('/campaigns/:cid/notes', h((req) => createNote(db, requireUser(req), req.params.cid, req.body)));
   r.patch('/campaigns/:cid/notes/:id', h((req) => updateNote(db, requireUser(req), req.params.cid, req.params.id, req.body)));
+  r.post('/campaigns/:cid/notes/:id/images', h((req) => addNoteImages(db, requireUser(req), req.params.cid, req.params.id, req.body.images)));
+  r.delete('/campaigns/:cid/notes/:id/images/:imageId', h((req) => deleteNoteImage(db, requireUser(req), req.params.cid, req.params.id, req.params.imageId)));
+  r.get('/campaigns/:cid/note-images/:id', h((req, res) => {
+    const img = getNoteImage(db, requireUser(req), req.params.cid, req.params.id);
+    res.type(img.mime).set('Cache-Control', 'private, max-age=86400').send(Buffer.from(img.data));
+  }));
   r.delete('/campaigns/:cid/notes/:id', h((req) => deleteNote(db, requireUser(req), req.params.cid, req.params.id)));
   return r;
 }
