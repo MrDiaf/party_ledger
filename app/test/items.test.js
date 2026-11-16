@@ -108,3 +108,25 @@ test('custom items: weapons get damage, armor and shields drive AC, consumables 
   assert.equal(itemOf(srd, { name: 'Potion', category: 'Consumable' }).kind, 'Consumable');
   assert.equal(groupKind(findItem(srd, 'rations-1-day')), 'Consumable');
 });
+
+test('PDF sheet import reads form fields, text and page images', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { PDFDocument, StandardFonts } = await import('pdf-lib');
+  const { readSheetPdf } = await import('../server/importSheet.js');
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([400, 400]);
+  page.drawText('STRENGTH', { x: 20, y: 360, size: 12, font: await doc.embedFont(StandardFonts.Helvetica) });
+  const form = doc.getForm();
+  const f = form.createTextField('CharacterName'); f.setText('Mira Quickfoot'); f.addToPage(page, { x: 20, y: 300, width: 200, height: 20 });
+  const c = form.createCheckBox('StrProf'); c.check(); c.addToPage(page, { x: 20, y: 260, width: 12, height: 12 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-import-'));
+  try {
+    const r = await readSheetPdf(Buffer.from(await doc.save()), dir);
+    assert.ok(r.fields.includes('CharacterName: Mira Quickfoot'));
+    assert.ok(r.fields.includes('StrProf: [x]'));
+    assert.match(r.text, /STRENGTH/);
+    assert.equal(r.images.length, 1, 'page rendered for vision');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

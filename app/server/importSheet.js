@@ -1,9 +1,11 @@
-// Character-sheet photo import: images -> Codex vision with a strict JSON schema -> character draft.
+// Character-sheet import: photos and/or PDFs (form fields + text + rendered pages) -> Codex vision with a strict JSON schema -> character draft.
 // The draft is returned to the browser for review; nothing is saved until the player presses Create.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { Router } from 'express';
+import { PDFDocument } from 'pdf-lib';
 import { HttpError, h, requireUser } from './core.js';
 import { runAgent } from './ai.js';
 import { blankCharacter, suggestedSlots, ABILITIES } from '../shared/rules.js';
@@ -35,7 +37,7 @@ export const SHEET_SCHEMA = obj({
   unreadable: S,
 });
 
-const PROMPT = `These images are a filled-in Dungeons & Dragons 5e character sheet (any layout, possibly handwritten, possibly several pages).
+const PROMPT = `These images (and any PDF data below) are a filled-in Dungeons & Dragons 5e character sheet (any layout, possibly handwritten, possibly several pages).
 Transcribe it into the JSON schema. Rules:
 - Copy what is written; do not invent values. Use "" / 0 / [] when a field is empty or unreadable.
 - abilities are the SCORES (e.g. 15), not modifiers.
@@ -43,6 +45,37 @@ Transcribe it into the JSON schema. Rules:
 - spell_slots_total: 9 numbers, total slots for spell levels 1-9.
 - spells: level 0 for cantrips.
 - Put anything you could not read or that did not fit into "unreadable".`;
+
+const MAX_PDF = 25 * 1024 * 1024;
+const MAX_PAGES = 6;
+
+/**
+ * What a PDF sheet says: fillable form fields (exact values, e.g. D&D Beyond / official fillable sheets),
+ * the text layer, and the pages rendered as images for vision. Returns { fields, text, images: [file] }.
+ */
+export async function readSheetPdf(bytes, dir, tag = 'pdf') {
+  const out = { fields: [], text: '', images: [] };
+  try {
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    for (const f of doc.getForm().getFields()) {
+      let v = '';
+      try {
+        if (typeof f.getText === 'function') v = f.getText() || '';
+        else if (typeof f.isChecked === 'function') v = f.isChecked() ? '[x]' : '';
+        else if (typeof f.getSelected === 'function') v = [].concat(f.getSelected() || []).join(', ');
+      } catch { /* unreadable field */ }
+      if (String(v).trim()) out.fields.push(`${f.getName()}: ${String(v).trim()}`);
+    }
+  } catch { /* not parseable by pdf-lib (or no form) — the text layer and page images still work */ }
+  const file = path.join(dir, `${tag}.pdf`);
+  fs.writeFileSync(file, bytes);
+  try { out.text = execFileSync('pdftotext', ['-layout', '-l', String(MAX_PAGES), file, '-'], { maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* no text layer */ }
+  try {
+    execFileSync('pdftoppm', ['-r', '120', '-jpeg', '-jpegopt', 'quality=85', '-l', String(MAX_PAGES), file, path.join(dir, `${tag}-page`)], { stdio: 'ignore' });
+    out.images = fs.readdirSync(dir).filter((f) => f.startsWith(`${tag}-page`)).sort().map((f) => path.join(dir, f));
+  } catch { /* rendering failed — fields/text may still be enough */ }
+  return out;
+}
 
 const find = (list, name) => list.find((x) => x.name.toLowerCase() === String(name || '').trim().toLowerCase())
   || list.find((x) => String(name || '').toLowerCase().includes(x.name.toLowerCase()));
@@ -93,22 +126,40 @@ export function sheetToCharacter(x) {
 
 export function importRouter(db) {
   const r = Router();
+  // Photos and/or PDFs of a filled-in sheet → draft character (nothing is saved here).
   r.post('/import-image', h(async (req) => {
     const user = requireUser(req);
-    const images = (Array.isArray(req.body.images) ? req.body.images : []).slice(0, 4);
-    if (!images.length) throw new HttpError(400, 'Add at least one photo');
+    const uploads = [...(Array.isArray(req.body.images) ? req.body.images : []), ...(Array.isArray(req.body.files) ? req.body.files : [])].slice(0, 6);
+    if (!uploads.length) throw new HttpError(400, 'Add at least one photo or PDF');
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dnd-import-'));
     try {
-      const files = images.map((img, i) => {
-        const m = /^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/s.exec(String(img));
-        if (!m) throw new HttpError(400, 'Images must be PNG, JPEG, WebP or GIF');
-        const f = path.join(tmp, `page${i + 1}.${m[1].replace('jpeg', 'jpg')}`);
-        fs.writeFileSync(f, Buffer.from(m[2], 'base64'));
-        return f;
-      });
-      const out = await runAgent(db, { user, prompt: PROMPT, images: files, schema: SHEET_SCHEMA, useTools: false });
+      const images = [];
+      const extra = [];
+      let pdfNo = 0;
+      for (const [i, up] of uploads.entries()) {
+        const m = /^data:([\w/+.-]+);base64,(.+)$/s.exec(String(up));
+        if (!m) throw new HttpError(400, 'Unreadable upload');
+        const bytes = Buffer.from(m[2], 'base64');
+        if (m[1] === 'application/pdf') {
+          if (bytes.length > MAX_PDF) throw new HttpError(413, 'PDF too large (max 25 MB)');
+          pdfNo += 1;
+          const pdf = await readSheetPdf(bytes, tmp, `sheet${pdfNo}`);
+          if (!pdf.fields.length && !pdf.text && !pdf.images.length) throw new HttpError(400, 'Could not read that PDF');
+          images.push(...pdf.images);
+          if (pdf.fields.length) extra.push(`PDF ${pdfNo} form fields (exact values typed into the fillable sheet; trust these first):\n${pdf.fields.join('\n').slice(0, 30000)}`);
+          if (pdf.text) extra.push(`PDF ${pdfNo} text layer (may include printed labels):\n${pdf.text.slice(0, 30000)}`);
+        } else {
+          const im = /^image\/(png|jpe?g|webp|gif)$/.exec(m[1]);
+          if (!im) throw new HttpError(400, 'Upload photos (PNG, JPEG, WebP, GIF) or PDF files');
+          const f = path.join(tmp, `page${i + 1}.${im[1].replace('jpeg', 'jpg')}`);
+          fs.writeFileSync(f, bytes);
+          images.push(f);
+        }
+      }
+      const prompt = extra.length ? `${PROMPT}\n- Some pages came from a PDF; its form fields and text are given below and the pages are attached as images. Combine them.\n\n${extra.join('\n\n')}` : PROMPT;
+      const out = await runAgent(db, { user, prompt, images: images.slice(0, 8), schema: SHEET_SCHEMA, useTools: false });
       let parsed;
-      try { parsed = JSON.parse(out.text); } catch { throw new HttpError(502, 'The assistant did not return valid sheet data — try a clearer photo'); }
+      try { parsed = JSON.parse(out.text); } catch { throw new HttpError(502, 'The assistant did not return valid sheet data — try a clearer photo or PDF'); }
       return { data: sheetToCharacter(parsed), raw: parsed };
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

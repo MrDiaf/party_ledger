@@ -85,7 +85,7 @@ export default function CharactersPage() {
       <div className="grid three start-options">
         <Link to="/characters/new" className="card click start-card"><div className="start-icon">🧙</div><b>Guided builder</b><span className="muted small">Step by step: species, class, background, equipment choices, abilities, skills and spells.</span></Link>
         <button className="card click start-card" onClick={() => setBlank(true)}><div className="start-icon">📝</div><b>Blank sheet</b><span className="muted small">Skip the builder and fill in the character sheet yourself, field by field.</span></button>
-        <div className="card start-card"><div className="start-icon">📄</div><b>Paper sheet</b><span className="muted small">Prefer pen and paper? <a href="/api/sheet/blank.pdf">Download the blank official sheet</a> to print, or <Link to="/characters/import">import a photo</Link> of a filled one.</span></div>
+        <div className="card start-card"><div className="start-icon">📄</div><b>Paper sheet</b><span className="muted small">Prefer pen and paper? <a href="/api/sheet/blank.pdf">Download the blank official sheet</a> to print, or <Link to="/characters/import">import a photo or PDF</Link> of a filled one.</span></div>
       </div>
       {blank && <BlankSheetModal onClose={() => setBlank(false)} />}
       <ErrorBox error={error || life.err} />

@@ -53,8 +53,9 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
 - **Resource management** (the *Play* tab): damage/heal/temp HP, death saves, hit dice, spell
   slots and pact slots, class resources (Rage, Ki, Channel Divinity…), conditions, exhaustion,
   timed spells/effects with concentration, "time passes" buttons, and short/long rests per the PHB.
-- **Import a paper sheet**: take a photo (or upload scans). The assistant reads it with vision and
-  fills in a draft you review before creating.
+- **Import a sheet**: take a photo, upload scans, or upload a PDF (e.g. a D&D Beyond export or a
+  filled-in fillable sheet: its form fields are read exactly, other PDFs are read from their text and
+  page images). The assistant fills in a draft you review before creating.
 
 **For the DM** (only the party's DM sees these)
 - **Monsters**: search the Monster Manual by name, type or CR, open a stat block, and add one or

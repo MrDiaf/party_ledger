@@ -387,3 +387,9 @@ test('session log pictures, [imgN] references and assistant proposals', async ()
   assert.equal((await bob.post(`/api/ai/proposals/${props[0].id}/accept`)).status, 404, 'cannot commit twice');
   assert.throws(() => tool.run({ db, user: { id: 99999 } }, { session_id: s.id, upload_id: up }), /No image/);
 });
+
+test('sheet import refuses uploads that are not photos or PDFs', async () => {
+  const r = await bob.post('/api/characters/import-image', { files: ['data:text/html;base64,PGh0bWw+'] });
+  assert.equal(r.status, 400);
+  assert.equal((await bob.post('/api/characters/import-image', {})).status, 400);
+});
