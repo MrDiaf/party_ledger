@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, loadRules, resizeImage } from '../api.js';
-import { Modal, ErrorBox, useAction, useApp, useLoad } from '../components/ui.jsx';
+import { Modal, ErrorBox, ListInput, useAction, useApp, useLoad } from '../components/ui.jsx';
 import { ABILITIES, ABILITY_NAMES, SKILLS, derived as derive, signed, normalizeCharacter, suggestedSlots, suggestedResources } from '../../../shared/rules.js';
 import { applyLevel, suggestedAc } from '../lib/character.js';
 import { armorClass } from '../../../shared/items.js';
@@ -15,8 +15,6 @@ import { ALIGNMENTS } from '../components/Choices.jsx';
 import { useCharacterLifecycle } from './CharactersPage.jsx';
 
 const SKILL_CYCLE = { undefined: 'prof', prof: 'expert', expert: undefined };
-const csv = (arr) => (arr || []).join(', ');
-const uncsv = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
 function LevelUpModal({ srd, data, onClose, onApply }) {
   const [choice, setChoice] = useState({ class: data.classes[0]?.index || 'fighter' });
@@ -153,7 +151,7 @@ export function StatsTab({ data, edit, ro, x, srd }) {
         <div className="card stack">
           <h3>Proficiencies & languages</h3>
           {[['armor', 'Armor'], ['weapons', 'Weapons'], ['tools', 'Tools'], ['languages', 'Languages']].map(([k, l]) => (
-            <div key={k}><label>{l}</label><textarea rows={2} disabled={ro} value={csv(data.proficiencies[k])} onChange={(e) => set('proficiencies', { ...data.proficiencies, [k]: uncsv(e.target.value) })} /></div>
+            <div key={k}><label>{l}</label><ListInput area disabled={ro} value={data.proficiencies[k]} placeholder="Separate with commas" onChange={(v) => set('proficiencies', { ...data.proficiencies, [k]: v })} /></div>
           ))}
           <h3>Spellcasting</h3>
           <div className="row">

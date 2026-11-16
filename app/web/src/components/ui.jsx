@@ -61,3 +61,24 @@ export function NeedParty() {
 
 export const fmtDate = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 export const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+
+const splitList = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
+
+/**
+ * Comma-separated list field (languages, proficiencies…). Keeps exactly what you type while the field
+ * has focus — spaces included — and saves the cleaned-up list as you go.
+ */
+export function ListInput({ value, onChange, area, ...rest }) {
+  const joined = (value || []).filter(Boolean).join(', ');
+  const [text, setText] = useState(joined);
+  const [focused, setFocused] = useState(false);
+  // follow outside changes (autosave reload, AI edits) only while not typing
+  useEffect(() => { if (!focused) setText(joined); }, [joined, focused]);
+  const props = {
+    ...rest, value: text,
+    onFocus: () => setFocused(true),
+    onBlur: () => { setFocused(false); setText(joined); },
+    onChange: (e) => { setText(e.target.value); onChange(splitList(e.target.value)); },
+  };
+  return area ? <textarea rows={2} {...props} /> : <input {...props} />;
+}

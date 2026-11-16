@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, loadRules, resizeImage } from '../api.js';
-import { ErrorBox, useAction, useApp, useLoad } from '../components/ui.jsx';
+import { ErrorBox, ListInput, useAction, useApp, useLoad } from '../components/ui.jsx';
 import { ABILITIES, ABILITY_NAMES, SKILLS, STANDARD_ARRAY, POINT_BUY_COST, roll4d6DropLowest, rollDie, mod, signed, derived } from '../../../shared/rules.js';
 import { buildLevelOne, applyLevel, finishCharacter, findClass, findRace, racialBonuses, spellsFor } from '../lib/character.js';
 import { STARTING_WEALTH, classGear, backgroundGear, expandItems, findItem, totalWeight } from '../../../shared/items.js';
@@ -156,7 +156,7 @@ function BackgroundStep({ srd, draft, set }) {
             ))}</div>
           </div>
           <div><label>Extra languages & tool proficiencies (comma separated)</label>
-            <input value={(draft.languages || []).join(', ')} placeholder="e.g. Elvish, Dwarvish" onChange={(e) => set({ languages: e.target.value.split(',').map((s) => s.trim()) })} />
+            <ListInput value={draft.languages || []} placeholder="e.g. Elvish, Dwarvish" onChange={(languages) => set({ languages })} />
           </div>
         </div>
       )}
