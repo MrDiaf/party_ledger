@@ -62,6 +62,34 @@ function choiceOut(o) {
 // ---------- classes ----------
 const CASTER = { bard: 'full', cleric: 'full', druid: 'full', sorcerer: 'full', wizard: 'full', paladin: 'half', ranger: 'half', warlock: 'pact' };
 const SUBCLASS_LEVEL = { barbarian: 3, bard: 3, cleric: 1, druid: 2, fighter: 3, monk: 3, paladin: 3, ranger: 3, rogue: 3, sorcerer: 1, warlock: 1, wizard: 2 };
+// Warlock patrons widen the list you choose from; domain, oath and circle spells are simply always prepared.
+const SUBCLASS_SPELL_MODE = { warlock: 'expanded' };
+// PHB subclasses with features summarised in our own words (the PHB has the full text).
+const PHB_SUBCLASS_DETAIL = {
+  'the-archfey': {
+    desc: 'Your patron is a lord or lady of the fey: capricious, beautiful and dangerous.',
+    spell_mode: 'expanded',
+    spells: [[1, 'Faerie Fire'], [1, 'Sleep'], [3, 'Calm Emotions'], [3, 'Phantasmal Force'], [5, 'Blink'], [5, 'Plant Growth'], [7, 'Dominate Beast'], [7, 'Greater Invisibility'], [9, 'Dominate Person'], [9, 'Seeming']],
+    levels: {
+      1: [{ name: 'Fey Presence', desc: 'As an action, every creature in a 10-foot cube originating from you makes a Wisdom save against your warlock spell save DC. On a failure you choose: each is charmed or frightened by you until the end of your next turn. Once per short or long rest.' }],
+      6: [{ name: 'Misty Escape', desc: 'When you take damage, use your reaction to turn invisible and teleport up to 60 feet to a spot you can see. You stay invisible until the start of your next turn or until you attack or cast a spell. Once per short or long rest.' }],
+      10: [{ name: 'Beguiling Defenses', desc: 'You are immune to being charmed. When a creature tries to charm you, you can use your reaction to turn it back on them: they make a Wisdom save or are charmed by you for 1 minute or until they take damage.' }],
+      14: [{ name: 'Dark Delirium', desc: 'As an action, a creature you can see within 60 feet makes a Wisdom save or is charmed or frightened by you (your choice) for 1 minute (concentration), lost in an illusory realm. It ends early if the creature takes damage. Once per short or long rest.' }],
+    },
+  },
+  'the-great-old-one': {
+    desc: 'Your patron is an unknowable entity from the Far Realm or beyond the stars; its motives are incomprehensible.',
+    spell_mode: 'expanded',
+    spells: [[1, 'Dissonant Whispers'], [1, 'Hideous Laughter'], [3, 'Detect Thoughts'], [3, 'Phantasmal Force'], [5, 'Clairvoyance'], [5, 'Sending'], [7, 'Dominate Beast'], [7, 'Black Tentacles'], [9, 'Dominate Person'], [9, 'Telekinesis']],
+    levels: {
+      1: [{ name: 'Awakened Mind', desc: 'You can speak telepathically to any creature you can see within 30 feet. It understands you if it knows at least one language; you do not need to share one.' }],
+      6: [{ name: 'Entropic Ward', desc: 'When a creature makes an attack roll against you, use your reaction to give it disadvantage. If it misses, your next attack roll against it before the end of your next turn has advantage. Once per short or long rest.' }],
+      10: [{ name: 'Thought Shield', desc: 'Your thoughts cannot be read by telepathy unless you allow it, you have resistance to psychic damage, and a creature that deals psychic damage to you takes the same amount.' }],
+      14: [{ name: 'Create Thrall', desc: 'As an action, touch an incapacitated humanoid: it is charmed by you until a remove curse ends it, the charm is ended, or you use this feature again. You can talk to it telepathically while you are on the same plane.' }],
+    },
+  },
+};
+
 // PHB 2014 subclasses that are not in the SRD (name only — details live in the PHB / rules search).
 const PHB_SUBCLASSES = {
   barbarian: ['Path of the Totem Warrior'], bard: ['College of Valor'],
@@ -91,7 +119,20 @@ const classes = Classes.map((c) => {
   const srdSubs = Subclasses.filter((s) => s.class.index === c.index).map((s) => {
     const levelsSub = {};
     for (const l of Levels.filter((x) => x.subclass?.index === s.index)) levelsSub[l.level] = l.features.map(featureOut);
-    return { index: s.index, name: s.name, desc: text(s.desc), levels: levelsSub };
+    // Subclass spell lists: domain/oath spells (always prepared), patron expanded spells (extra choices),
+    // Circle of the Land spells (per terrain, in `group`).
+    const spells = (s.spells || []).map((sp) => {
+      const lvl = sp.prerequisites.find((p) => p.type === 'level');
+      const feat = sp.prerequisites.find((p) => p.type === 'feature');
+      return { level: Number(/-(\d+)$/.exec(lvl?.index || '')?.[1] || 1), name: sp.spell.name, ...(feat ? { group: feat.name.replace(/^.*: /, '') } : {}) };
+    });
+    // Circle of the Land: the terrain is a choice at 3rd level that decides the circle spells.
+    const groups = [...new Set(spells.map((x) => x.group).filter(Boolean))];
+    if (groups.length) {
+      levelsSub[3] = [{ name: 'Circle Spells', desc: 'Your bond with a land gives you spells that are always prepared and do not count against your prepared spells. Choose the land where you became a druid.',
+        options: groups.map((g) => ({ name: g, desc: spells.filter((x) => x.group === g).map((x) => `Druid ${x.level}: ${x.name}`).join(', ') })) }, ...(levelsSub[3] || [])];
+    }
+    return { index: s.index, name: s.name, desc: text(s.desc), levels: levelsSub, ...(spells.length ? { spells, spell_mode: SUBCLASS_SPELL_MODE[c.index] || 'always' } : {}) };
   });
   const profs = c.proficiencies.filter((p) => !p.index.startsWith('saving-throw')).map((p) => p.name);
   const choice = c.proficiency_choices[0];
@@ -105,7 +146,13 @@ const classes = Classes.map((c) => {
     caster: CASTER[c.index] || null,
     subclass_level: SUBCLASS_LEVEL[c.index],
     subclass_flavor: Subclasses.find((s) => s.class.index === c.index)?.subclass_flavor || 'Subclass',
-    subclasses: [...srdSubs, ...(PHB_SUBCLASSES[c.index] || []).map((name) => ({ index: name.toLowerCase().replace(/[^a-z]+/g, '-'), name, desc: 'PHB subclass — see the Player\'s Handbook for features.', levels: {}, phb: true }))],
+    subclasses: [...srdSubs, ...(PHB_SUBCLASSES[c.index] || []).map((name) => {
+      const index = name.toLowerCase().replace(/[^a-z]+/g, '-');
+      const x = PHB_SUBCLASS_DETAIL[index];
+      return x
+        ? { index, name, desc: x.desc, levels: x.levels, spells: x.spells.map(([level, n]) => ({ level, name: n })), spell_mode: x.spell_mode, phb: true }
+        : { index, name, desc: 'PHB subclass — see the Player\'s Handbook for features.', levels: {}, phb: true };
+    })],
     multiclass_prereq: (c.multi_classing.prerequisites || []).map((p) => ({ ability: p.ability_score.index, min: p.minimum_score })),
     multiclass_prereq_any: (c.multi_classing.prerequisite_options?.from?.options || []).map((p) => ({ ability: p.ability_score.index, min: p.minimum_score })),
     starting_equipment: c.starting_equipment.map((e) => ({ index: e.equipment.index, qty: e.quantity })),

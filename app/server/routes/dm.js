@@ -184,8 +184,9 @@ export function createNote(db, user, campaignId, b) {
   requireDm(db, user, campaignId);
   const cid = Number(campaignId);
   const sort = (db.prepare('SELECT MAX(sort) s FROM dm_notes WHERE campaign_id = ?').get(cid).s ?? 0) + 1;
-  const id = db.prepare('INSERT INTO dm_notes(campaign_id, title, body, shared, pinned, sort, author_id) VALUES(?,?,?,?,?,?,?)')
-    .run(cid, str(b.title, 120).trim() || 'New note', str(b.body, 100000), b.shared ? 1 : 0, b.pinned ? 1 : 0, sort, user.id).lastInsertRowid;
+  // created already shared = published now, so players see it as new
+  const id = db.prepare(`INSERT INTO dm_notes(campaign_id, title, body, shared, pinned, sort, author_id, published_at) VALUES(?,?,?,?,?,?,?,${b.shared ? "datetime('now')" : 'NULL'})`)
+    .run(cid, str(b.title, 120).trim() || (b.shared ? 'Announcement' : 'New note'), str(b.body, 100000), b.shared ? 1 : 0, b.pinned ? 1 : 0, sort, user.id).lastInsertRowid;
   return { id: Number(id) };
 }
 

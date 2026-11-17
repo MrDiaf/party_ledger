@@ -17,6 +17,7 @@ import ImportPage from './pages/ImportPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
 import MonstersPage from './pages/MonstersPage.jsx';
 import NotesPage from './pages/NotesPage.jsx';
+import MapsPage from './pages/MapsPage.jsx';
 import AiPanel from './components/AiPanel.jsx';
 
 const CAMPAIGN_KEY = 'dnd.campaign';
@@ -67,12 +68,13 @@ export default function App() {
             <NavLink to="/quests">📜 Quests</NavLink>
             <NavLink to="/treasury">💰 Treasury</NavLink>
             <NavLink to="/logs">📖 Session logs</NavLink>
+            <NavLink to="/maps">🗺️ Maps</NavLink>
             <NavLink to="/party">🛡️ Party</NavLink>
             {campaign?.role !== 'dm' && campaign && <NavLink to="/notes">📣 Announcements</NavLink>}
             {campaign?.role === 'dm' && <>
               <div className="nav-section">Dungeon Master</div>
               <NavLink to="/monsters">🐉 Monsters</NavLink>
-              <NavLink to="/notes">📝 DM notes</NavLink>
+              <NavLink to="/notes">📝 Notes & announcements</NavLink>
             </>}
             <div className="nav-section">Personal</div>
             <NavLink to="/characters">🧙 Characters</NavLink>
@@ -107,6 +109,8 @@ export default function App() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/monsters" element={<MonstersPage />} />
             <Route path="/notes" element={<NotesPage />} />
+            <Route path="/maps" element={<MapsPage />} />
+            <Route path="/maps/:id" element={<MapsPage />} />
             <Route path="/notes/:id" element={<NotesPage />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>

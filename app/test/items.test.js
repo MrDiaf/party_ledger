@@ -130,3 +130,24 @@ test('PDF sheet import reads form fields, text and page images', async () => {
     assert.equal(r.images.length, 1, 'page rendered for vision');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('subclass spells: patron expanded list, always-prepared domain spells, PHB patrons, sync', async () => {
+  const { applyLevel, spellsFor, syncSubclasses } = await import('../web/src/lib/character.js');
+  assert.ok(spellsFor(srd, 'warlock', 1, 1, 'fiend').some((s) => s.name === 'Burning Hands' && s.patron === 'Fiend'));
+  assert.ok(!spellsFor(srd, 'warlock', 1, 1).some((s) => s.name === 'Burning Hands'));
+  const arch = buildLevelOne(srd, { class: 'warlock', subclass: 'the-archfey', background: 'sage' });
+  assert.ok(arch.features.some((f) => f.name === 'Fey Presence'), 'PHB patron has features now');
+  let cleric = buildLevelOne(srd, { class: 'cleric', subclass: 'life', background: 'acolyte' });
+  assert.deepEqual(cleric.spells.map((s) => s.name), ['Bless', 'Cure Wounds']);
+  cleric = applyLevel(srd, applyLevel(srd, cleric, { class: 'cleric', hp: 5 }), { class: 'cleric', hp: 5 });
+  assert.ok(cleric.spells.some((s) => s.name === 'Spiritual Weapon'), 'domain spells arrive at cleric 3');
+  let druid = buildLevelOne(srd, { class: 'druid', background: 'hermit' });
+  druid = applyLevel(srd, druid, { class: 'druid', hp: 5, subclass: 'land' });
+  druid = applyLevel(srd, druid, { class: 'druid', hp: 5, featureChoices: { 'Circle Spells': 'Forest' } });
+  assert.deepEqual(druid.spells.filter((s) => /always/.test(s.notes)).map((s) => s.name).sort(), ['Barkskin', 'Spider Climb']);
+  // an old character that picked a patron before its features existed
+  const old = { ...arch, features: arch.features.filter((f) => f.name !== 'Fey Presence') };
+  const r = syncSubclasses(srd, old);
+  assert.deepEqual(r.added, ['Fey Presence']);
+  assert.deepEqual(syncSubclasses(srd, r.data).added, [], 'idempotent');
+});

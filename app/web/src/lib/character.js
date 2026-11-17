@@ -44,8 +44,21 @@ function spellEntry(srd, name) {
     : { name, level: 0, prepared: true, concentration: false, ritual: false, casting_time: '', range: '', components: '', duration: '', notes: '' };
 }
 
-function addSpells(d, srd, names = []) {
-  for (const n of names) if (!d.spells.some((s) => s.name === n)) d.spells.push(spellEntry(srd, n));
+function addSpells(d, srd, names = [], notes = '') {
+  for (const n of names) if (!d.spells.some((s) => s.name === n)) d.spells.push({ ...spellEntry(srd, n), notes });
+}
+
+/** Domain / oath / circle spells a subclass makes always prepared, up to a class level. */
+export function alwaysPreparedSpells(srd, d, classIdx, subIdx, upToLevel) {
+  const sub = findClass(srd, classIdx)?.subclasses.find((s) => s.index === subIdx);
+  if (!sub?.spells || sub.spell_mode === 'expanded') return [];
+  const terrain = d.features.map((f) => /^Circle Spells: (.+)$/.exec(f.name)?.[1]).find(Boolean);
+  return sub.spells.filter((s) => s.level <= upToLevel && (!s.group || s.group === terrain)).map((s) => s.name);
+}
+
+function addSubclassSpells(srd, d, classIdx, subIdx, level) {
+  const sub = findClass(srd, classIdx)?.subclasses.find((s) => s.index === subIdx);
+  addSpells(d, srd, alwaysPreparedSpells(srd, d, classIdx, subIdx, level), `${sub?.name || 'Subclass'} spell — always prepared`);
 }
 
 const picksOf = (v) => (Array.isArray(v) ? v : v ? [v] : []);
@@ -137,6 +150,7 @@ export function buildLevelOne(srd, draft) {
     const hp = Math.max(1, cls.hit_die + mod(d.abilities.con) + (draft.subrace === 'hill-dwarf' ? 1 : 0));
     d.hp = { max: hp, current: hp, temp: 0 };
     d.features.push(...featuresFor(srd, cls.index, sc?.index, 1, draft.featureChoices));
+    addSubclassSpells(srd, d, cls.index, sc?.index, 1);
     d.spellcasting.ability = cls.spellcasting_ability;
     refreshSlots(d, srd);
     addSpells(d, srd, [...(draft.cantrips || []), ...(draft.spells || [])]);
@@ -209,6 +223,7 @@ export function applyLevel(srd, data, choice) {
     for (let l = 1; l < L; l++) for (const f of sc?.levels?.[l] || []) if (!d.features.some((x) => x.name === f.name)) d.features.push({ name: f.name, source: `${sc.name} ${l}`, desc: f.desc });
   }
   d.features.push(...featuresFor(srd, def.index, entry.subclass, L, choice.featureChoices));
+  addSubclassSpells(srd, d, def.index, entry.subclass, L);
   refreshSlots(d, srd);
   addSpells(d, srd, choice.spells);
   mergeResources(d, srd);
@@ -218,6 +233,32 @@ export function applyLevel(srd, data, choice) {
       choice.asi?.mode === 'feat' && `feat ${choice.asi.feat}${choice.asi.ability ? ` (+1 ${choice.asi.ability.toUpperCase()})` : ''}`, choice.spells?.length && `spells: ${choice.spells.join(', ')}`].filter(Boolean).join('; '),
   });
   return d;
+}
+
+/**
+ * Bring an existing character up to date with its subclasses: add subclass features it is missing
+ * (e.g. a patron picked before its features were in the app) and always-prepared subclass spells.
+ * Returns { data, added: [names] }.
+ */
+export function syncSubclasses(srd, data) {
+  const d = normalizeCharacter(clone(data));
+  const added = [];
+  for (const c of d.classes) {
+    const def = findClass(srd, c.index);
+    const sub = def?.subclasses.find((s) => s.index === c.subclass);
+    if (!sub) continue;
+    for (let l = 1; l <= c.level; l++) {
+      for (const f of sub.levels?.[l] || []) {
+        if (d.features.some((x) => x.name === f.name || x.name.startsWith(`${f.name}:`))) continue;
+        d.features.push({ name: f.name, source: `${sub.name} ${l}`, desc: f.desc });
+        added.push(f.name);
+      }
+    }
+    const before = d.spells.length;
+    addSubclassSpells(srd, d, c.index, c.subclass, c.level);
+    added.push(...d.spells.slice(before).map((s) => s.name));
+  }
+  return { data: d, added };
 }
 
 /** What a given class level grants, for the level-up UI. */
@@ -257,6 +298,10 @@ export function multiclassWarning(srd, data, classIdx) {
   return fails.length ? `PHB multiclass prerequisites not met: ${fails.join('; ')}. Allowed anyway.` : '';
 }
 
-export function spellsFor(srd, classIdx, maxLevel, minLevel = 0) {
-  return srd.spells.filter((s) => s.classes.includes(classIdx) && s.level <= maxLevel && s.level >= minLevel);
+/** Spells a class can pick from, including a warlock patron's expanded spells. */
+export function spellsFor(srd, classIdx, maxLevel, minLevel = 0, subIdx = null) {
+  const sub = findClass(srd, classIdx)?.subclasses.find((s) => s.index === subIdx);
+  const extra = new Set(sub?.spell_mode === 'expanded' ? sub.spells.map((s) => s.name) : []);
+  return srd.spells.filter((s) => (s.classes.includes(classIdx) || extra.has(s.name)) && s.level <= maxLevel && s.level >= minLevel)
+    .map((s) => (extra.has(s.name) && !s.classes.includes(classIdx) ? { ...s, patron: sub.name } : s));
 }

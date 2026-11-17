@@ -95,7 +95,7 @@ export default function LevelChoice({ srd, data, choice, onChange }) {
       )}
 
       {info.isCaster && maxLvl > 0 && (
-        <SpellPicker label={`New spells (up to level ${maxLvl})`} spells={spellsFor(srd, choice.class, maxLvl)} exclude={known}
+        <SpellPicker label={`New spells (up to level ${maxLvl})`} spells={spellsFor(srd, choice.class, maxLvl, 0, choice.subclass || data.classes.find((c) => c.index === choice.class)?.subclass)} exclude={known}
           suggested={info.newSpellsKnown != null ? info.newSpellsKnown + info.newCantrips : null}
           selected={choice.spells || []} onChange={(spells) => set({ spells })} />
       )}

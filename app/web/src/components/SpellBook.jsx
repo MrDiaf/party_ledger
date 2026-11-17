@@ -140,7 +140,12 @@ export function SpellLibrary({ srd, data, onAdd, onClose }) {
   const [picked, setPicked] = useState([]);
   const have = new Set(data.spells.map((s) => s.name.toLowerCase()));
   const cap = maxSpellLevel(data);
-  const pool = srd.spells.filter((s) => (cls === 'all' || s.classes.includes(cls)) && (school === 'all' || s.school === school));
+  // your patron's expanded spells count as your class's list
+  const expanded = new Set(data.classes.flatMap((c) => {
+    const sub = srd.classes.find((k) => k.index === c.index)?.subclasses.find((x) => x.index === c.subclass);
+    return c.index === cls && sub?.spell_mode === 'expanded' ? sub.spells.map((x) => x.name) : [];
+  }));
+  const pool = srd.spells.filter((s) => (cls === 'all' || s.classes.includes(cls) || expanded.has(s.name)) && (school === 'all' || s.school === school));
   const shown = pool.filter((s) => (level === 'all' || s.level === level) && (!q || s.name.toLowerCase().includes(q.toLowerCase())));
   const levels = [...new Set(pool.map((s) => s.level))].sort((a, b) => a - b);
   return (

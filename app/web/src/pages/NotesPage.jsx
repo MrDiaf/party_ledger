@@ -111,6 +111,42 @@ function NoteEditor({ cid, note, onSaved, onDeleted }) {
   );
 }
 
+/** Ask for a name (and, for announcements, the message) before creating. */
+function CreateNoteModal({ shared, onCreate, onClose }) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [run, busy, err] = useAction();
+  return (
+    <Modal title={shared ? '📣 New announcement' : '📝 New private note'} onClose={onClose}>
+      <form className="stack" onSubmit={(e) => { e.preventDefault(); if (title.trim()) run(() => onCreate({ title: title.trim(), body, shared })); }}>
+        <div><label>{shared ? 'Announcement title' : 'Note title'}</label>
+          <input autoFocus value={title} maxLength={120} placeholder={shared ? 'e.g. Next session moved to Saturday' : 'e.g. Villain plans, NPC secrets'} onChange={(e) => setTitle(e.target.value)} /></div>
+        <div><label>{shared ? 'Message (you can add pictures after creating)' : 'Text (optional)'}</label>
+          <textarea rows={5} value={body} onChange={(e) => setBody(e.target.value)} /></div>
+        <div className="muted small">{shared ? 'Players see it straight away on the Overview and under Announcements.' : 'Only you can see this until you tick "Visible to players".'}</div>
+        <ErrorBox error={err} />
+        <div className="row end"><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !title.trim()}>{shared ? 'Post announcement' : 'Create note'}</button></div>
+      </form>
+    </Modal>
+  );
+}
+
+const excerpt = (t) => String(t || '').replace(/\[img\s*\d+\]/gi, '🖼').replace(/\s+/g, ' ').trim().slice(0, 160);
+
+function NoteCard({ cid, n, onOpen, isDm }) {
+  const first = n.images?.[0];
+  return (
+    <button className="note-card" onClick={onOpen}>
+      {first && <img src={noteImgUrl(cid, first.id)} alt="" loading="lazy" />}
+      <div className="grow" style={{ minWidth: 0 }}>
+        <div className="note-card-title">{n.pinned ? '📌 ' : ''}{n.title}</div>
+        <div className="muted small">{fmtDate(((n.shared && n.published_at) || n.updated_at) + 'Z')}{n.images?.length ? ` · ${n.images.length} picture${n.images.length > 1 ? 's' : ''}` : ''}{isDm && n.shared ? ' · players can see' : ''}</div>
+        <div className="small note-card-text">{excerpt(n.body) || <span className="muted">(empty)</span>}</div>
+      </div>
+    </button>
+  );
+}
+
 export default function NotesPage() {
   const { campaign } = useApp();
   const cid = campaign?.id;
@@ -118,51 +154,61 @@ export default function NotesPage() {
   const { id } = useParams();
   const nav = useNavigate();
   const { data: notes, error, reload } = useLoad(() => (cid ? api.get(`/campaigns/${cid}/notes`) : Promise.resolve([])), [cid]);
-  const [run, busy, actErr] = useAction();
+  const [creating, setCreating] = useState(null); // null | 'note' | 'announcement'
+  const [q, setQ] = useState('');
   const [viewer, setViewer] = useState(null);
   if (!cid) return <NeedParty />;
 
-  const current = notes?.find((n) => String(n.id) === id) || notes?.[0];
-  const create = (shared) => run(async () => {
-    const r = await api.post(`/campaigns/${cid}/notes`, { title: shared ? 'Announcement' : 'New note', shared });
+  const open = notes?.find((n) => String(n.id) === id);
+  const match = (n) => !q || `${n.title} ${n.body}`.toLowerCase().includes(q.toLowerCase());
+  const announcements = (notes || []).filter((n) => n.shared && match(n));
+  const privateNotes = (notes || []).filter((n) => !n.shared && match(n));
+  const create = async (b) => {
+    const r = await api.post(`/campaigns/${cid}/notes`, b);
+    setCreating(null);
     await reload();
     nav(`/notes/${r.id}`);
-  });
+  };
+  const section = (title, list, empty) => (
+    <section className="stack" style={{ gap: 8 }}>
+      <h2 style={{ margin: 0 }}>{title} <span className="muted small">({list.length})</span></h2>
+      {list.length ? <div className="note-list">{list.map((n) => <NoteCard key={n.id} cid={cid} n={n} isDm={isDm} onOpen={() => nav(`/notes/${n.id}`)} />)}</div>
+        : <div className="empty">{empty}</div>}
+    </section>
+  );
 
   return (
     <div className="stack">
       <div className="page-head">
-        <h1>{isDm ? 'DM notes' : 'Announcements'}</h1>
+        <h1>{isDm ? 'Notes & announcements' : 'Announcements'}</h1>
         {isDm && (
           <div className="row">
-            <button disabled={busy} onClick={() => create(false)}>+ Note</button>
-            <button className="primary" disabled={busy} onClick={() => create(true)}>📣 New announcement</button>
+            <button onClick={() => setCreating('note')}>📝 Private note</button>
+            <button className="primary" onClick={() => setCreating('announcement')}>📣 Announcement</button>
           </div>
         )}
       </div>
-      <ErrorBox error={error || actErr} />
-      {notes && !notes.length && <div className="empty">{isDm ? 'No notes yet. Notes are private until you tick "Visible to players".' : 'Your DM has not posted any announcements yet.'}</div>}
-      {notes?.length > 0 && (
-        <div className="tabs">
-          {notes.map((n) => (
-            <button key={n.id} className={current?.id === n.id ? 'active' : ''} onClick={() => nav(`/notes/${n.id}`)}>
-              {n.pinned ? '📌 ' : ''}{isDm && n.shared ? '📣 ' : ''}{n.title}
-            </button>
-          ))}
-        </div>
-      )}
-      {current && (isDm
-        ? <NoteEditor key={current.id} cid={cid} note={current} onSaved={reload} onDeleted={async () => { await reload(); nav('/notes'); }} />
-        : (
-          <div className="card stack announcement">
-            <h2 style={{ margin: 0 }}>{current.title}</h2>
-            <div className="muted small">{current.author || 'DM'} · {fmtDate((current.published_at || current.updated_at) + 'Z')}</div>
-            <div className="pre">{current.body
-              ? <LogText text={current.body} images={current.images || []} onOpen={setViewer} url={(i) => noteImgUrl(cid, i.id)} where="note" />
+      <ErrorBox error={error} />
+      {(notes?.length || 0) > 4 && <input placeholder="Search notes…" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 360 }} />}
+      {notes && section('📣 Announcements', announcements, isDm ? 'Nothing announced yet. Announcements are notes your players can see.' : 'Your DM has not posted any announcements yet.')}
+      {notes && isDm && section('📝 Private notes', privateNotes, 'No private notes. Only you see these.')}
+
+      {creating && <CreateNoteModal shared={creating === 'announcement'} onCreate={create} onClose={() => setCreating(null)} />}
+      {open && (isDm ? (
+        <Modal title={open.shared ? '📣 Announcement' : '📝 Private note'} onClose={() => nav('/notes')} wide>
+          <NoteEditor key={open.id} cid={cid} note={open} onSaved={reload} onDeleted={async () => { await reload(); nav('/notes'); }} />
+        </Modal>
+      ) : (
+        <Modal title={open.title} onClose={() => nav('/notes')} wide>
+          <div className="stack announcement">
+            <div className="muted small">{open.author || 'DM'} · {fmtDate((open.published_at || open.updated_at) + 'Z')}</div>
+            <div className="pre">{open.body
+              ? <LogText text={open.body} images={open.images || []} onOpen={setViewer} url={(i) => noteImgUrl(cid, i.id)} where="note" />
               : <span className="muted">(empty)</span>}</div>
-            <NotePictures cid={cid} note={current} viewer={viewer} setViewer={setViewer} />
+            <NotePictures cid={cid} note={open} viewer={viewer} setViewer={setViewer} />
           </div>
-        ))}
+        </Modal>
+      ))}
     </div>
   );
 }

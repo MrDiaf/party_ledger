@@ -393,3 +393,23 @@ test('sheet import refuses uploads that are not photos or PDFs', async () => {
   assert.equal(r.status, 400);
   assert.equal((await bob.post('/api/characters/import-image', {})).status, 400);
 });
+
+test('party maps: DM uploads, players see only visible maps; notes can be created as named announcements', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const pid = partyId; // alice is the DM, bob a player, eve not a member
+  const world = (await alice.post(`/api/campaigns/${pid}/maps`, { title: 'World', image: png })).body;
+  const secret = (await alice.post(`/api/campaigns/${pid}/maps`, { title: 'Lair', image: png, shared: false })).body;
+  assert.deepEqual((await bob.get(`/api/campaigns/${pid}/maps`)).body.map((m) => m.title), ['World']);
+  assert.equal((await bob.raw(`/api/campaigns/${pid}/maps/${secret.id}/image`)).status, 404);
+  assert.equal((await bob.raw(`/api/campaigns/${pid}/maps/${world.id}/image`)).status, 200);
+  assert.equal((await bob.post(`/api/campaigns/${pid}/maps`, { title: 'x', image: png })).status, 403);
+  assert.equal((await eve.raw(`/api/campaigns/${pid}/maps/${world.id}/image`)).status, 403);
+  assert.equal((await alice.post(`/api/campaigns/${pid}/maps`, { title: 'bad', image: 'data:text/plain;base64,AA' })).status, 400);
+  assert.equal((await alice.patch(`/api/campaigns/${pid}/maps/${secret.id}`, { shared: true, title: 'Dragon lair' })).status, 200);
+  assert.deepEqual((await alice.get(`/api/campaigns/${pid}/maps`)).body.map((m) => [m.title, m.shared]), [['World', true], ['Dragon lair', true]]);
+
+  const n = (await alice.post(`/api/campaigns/${pid}/notes`, { title: 'Session moved to Saturday', body: 'See you then', shared: true })).body;
+  const note = (await alice.get(`/api/campaigns/${pid}/notes`)).body.find((x) => x.id === n.id);
+  assert.equal(note.title, 'Session moved to Saturday');
+  assert.ok(note.published_at, 'created-as-shared counts as published');
+});

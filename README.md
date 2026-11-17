@@ -18,6 +18,8 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
 - **Quests**: available, active and past (completed/failed) quests.
 - **Treasury**: pp/gp/ep/sp/cp plus your own currencies with notes and gold value, informal items
   with free-text stats, and a history of every change.
+- **Maps**: the DM uploads world, region or dungeon maps; players see the ones marked visible.
+  Full-screen viewer with zoom and pan (wheel, drag, pinch), arrows to flip between maps, and notes.
 - **Session logs**: start a session and type what happens. Everyone sees new entries live.
   Optional voice dictation in browsers that support it (Chrome/Edge). Add pictures (📷 button,
   paste or drag & drop); each gets a number in the session, and writing `[img3]` in any entry links
@@ -40,6 +42,10 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
   appearance, backstory, personality and personal notes, plus a portrait.
 - **Download PDF**: the character written onto the official 2024 character sheet (both pages),
   followed by pages with every feature, spell, item and story text in full.
+- **Subclass spells**: domain, oath and Circle of the Land spells are added as always prepared;
+  warlock patrons' expanded spells show up in the spell choices. The PHB patrons (Archfey, Great
+  Old One) have their features. "↻ Recalculate" on the Sheet tab adds anything an older character
+  is missing.
 - **Spellbook**: spells as tiles by school and level (Baldur's Gate style), slot pips, tap a spell for
   its full text, damage/save DC worked out for your character, and cast it (pick the slot level to
   upcast; concentration/duration become timed effects). A spell library to learn new spells. Besides
@@ -63,7 +69,8 @@ It is an **organisation tool, not a game**: rules are applied when you press a b
   the current fight. Each slot tracks HP (damage/heal, temp HP), AC, initiative (🎲 rolls it for
   everyone), conditions and notes, and keeps its stat block one tap away. Custom monsters work
   without the book.
-- **DM notes**: private notes in tabs (plot threads, NPC secrets…). Tick **📣 Visible to players**
+- **Notes & announcements**: a list of cards split into Announcements and Private notes; each
+  opens in a pop-up. New ones ask for a name first. Private notes: plot threads, NPC secrets… Tick **📣 Visible to players**
   to turn a note into an **announcement**. Players see it on the Overview and under
   *Announcements*; pinned ones stay on top.
 

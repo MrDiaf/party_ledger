@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, loadRules, resizeImage } from '../api.js';
 import { Modal, ErrorBox, ListInput, useAction, useApp, useLoad } from '../components/ui.jsx';
 import { ABILITIES, ABILITY_NAMES, SKILLS, derived as derive, signed, normalizeCharacter, suggestedSlots, suggestedResources } from '../../../shared/rules.js';
-import { applyLevel, suggestedAc } from '../lib/character.js';
+import { applyLevel, suggestedAc, syncSubclasses } from '../lib/character.js';
 import { armorClass } from '../../../shared/items.js';
 import PlayTab from '../components/PlayTab.jsx';
 import HistoryTab from '../components/HistoryTab.jsx';
@@ -170,15 +170,20 @@ export function StatsTab({ data, edit, ro, x, srd }) {
           <ListEditor readOnly={ro} items={data.resources} onChange={(v) => set('resources', v)} blank={{ name: '', max: 1, used: 0, recharge: 'long' }}
             fields={[{ key: 'name', label: 'Name', width: 2 }, { key: 'max', label: 'Max', type: 'number' }, { key: 'recharge', label: 'short/long/none' }]} />
           <div className="muted small">Hit dice: {Object.entries(data.hit_dice).map(([d, h]) => `${h.total}${d}`).join(' + ') || '—'}</div>
-          {srd && !ro && <button className="small" onClick={() => {
+          {srd && !ro && <button className="small" title="Also adds missing subclass features and subclass spells (domain, oath, circle, patron)" onClick={() => {
             const s = suggestedSlots(data.classes, srd);
             const fresh = suggestedResources(data, srd);
-            edit((d) => ({
-              ...d,
-              spellcasting: { ...d.spellcasting, slots: s.slots.map((max, i) => ({ max, used: d.spellcasting.slots[i]?.used || 0 })), pact: s.pact ? { ...s.pact, used: d.spellcasting.pact?.used || 0 } : null },
-              resources: [...fresh.map((f) => ({ ...f, used: d.resources.find((r) => r.key === f.key)?.used || 0 })), ...d.resources.filter((r) => !r.key || !fresh.some((f) => f.key === r.key))],
-            }));
-          }}>↻ Recalculate slots & class resources from levels</button>}
+            const synced = syncSubclasses(srd, data);
+            if (synced.added.length) alert(`Added from your subclass: ${synced.added.join(', ')}`);
+            edit((cur) => {
+              const d = syncSubclasses(srd, cur).data;
+              return {
+                ...d,
+                spellcasting: { ...d.spellcasting, slots: s.slots.map((max, i) => ({ max, used: d.spellcasting.slots[i]?.used || 0 })), pact: s.pact ? { ...s.pact, used: d.spellcasting.pact?.used || 0 } : null },
+                resources: [...fresh.map((f) => ({ ...f, used: d.resources.find((r) => r.key === f.key)?.used || 0 })), ...d.resources.filter((r) => !r.key || !fresh.some((f) => f.key === r.key))],
+              };
+            });
+          }}>↻ Recalculate slots, class resources & subclass features</button>}
         </div>
       </div>
     </div>

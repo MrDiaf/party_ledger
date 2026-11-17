@@ -9,6 +9,7 @@ import { sessionMiddleware, errorHandler } from './core.js';
 import { authRouter, campaignsRouter } from './routes/auth.js';
 import { adminRouter, adminNetworkGate } from './routes/admin.js';
 import { dmRouter, monstersCatalog } from './routes/dm.js';
+import { mapsRouter } from './routes/maps.js';
 import { partyRouter } from './routes/party.js';
 import { charactersRouter } from './routes/characters.js';
 import { mcpHandler } from './mcp.js';
@@ -38,6 +39,7 @@ export function createApp(db) {
   app.use('/api/characters', importRouter(db));
   app.use('/api/characters', charactersRouter(db));
   app.use('/api', dmRouter(db));
+  app.use('/api', mapsRouter(db));
   app.use('/api/ai', aiRouter(db));
   // No admin API here: the admin panel lives only on the LAN-only admin port (createAdminApp).
   // MCP is only for the Codex process inside this container.

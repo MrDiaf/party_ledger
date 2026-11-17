@@ -367,9 +367,9 @@ function SpellsStep({ srd, draft, set, level1 }) {
   const suggested = cls.index === 'wizard' ? 6 : prepared ? Math.max(1, abilityMod + 1) : l1.spells_known;
   return (
     <div className="grid two">
-      {l1.cantrips_known > 0 && <div className="card"><SpellPicker label="Cantrips" spells={spellsFor(srd, cls.index, 0)} suggested={l1.cantrips_known} selected={draft.cantrips} onChange={(cantrips) => set({ cantrips })} /></div>}
+      {l1.cantrips_known > 0 && <div className="card"><SpellPicker label="Cantrips" spells={spellsFor(srd, cls.index, 0, 0, draft.subclass)} suggested={l1.cantrips_known} selected={draft.cantrips} onChange={(cantrips) => set({ cantrips })} /></div>}
       <div className="card">
-        <SpellPicker label={cls.index === 'wizard' ? 'Spellbook (level 1)' : prepared ? 'Prepared spells' : 'Spells known'} spells={spellsFor(srd, cls.index, 1, 1)} suggested={suggested} selected={draft.spells} onChange={(spells) => set({ spells })} />
+        <SpellPicker label={cls.index === 'wizard' ? 'Spellbook (level 1)' : prepared ? 'Prepared spells' : 'Spells known'} spells={spellsFor(srd, cls.index, 1, 1, draft.subclass)} suggested={suggested} selected={draft.spells} onChange={(spells) => set({ spells })} />
         {prepared && <p className="muted small">{cls.name}s prepare {signed(abilityMod)} + level spells each day from the whole list — you can change these anytime on the sheet.</p>}
       </div>
     </div>

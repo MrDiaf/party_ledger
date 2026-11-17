@@ -20,7 +20,7 @@ export default function SpellPicker({ spells, selected, onChange, suggested, lab
             <div className="row" style={{ flexWrap: 'nowrap' }}>
               <input type="checkbox" checked={sel.has(s.name)} onChange={() => toggle(s.name)} />
               <span className="grow" style={{ cursor: 'pointer' }} onClick={() => setOpen(open === s.index ? null : s.index)}>
-                {s.name} <span className="muted small">{s.level ? `L${s.level}` : 'cantrip'} · {s.school}{s.concentration ? ' · C' : ''}{s.ritual ? ' · R' : ''}</span>
+                {s.name} <span className="muted small">{s.level ? `L${s.level}` : 'cantrip'} · {s.school}{s.concentration ? ' · C' : ''}{s.ritual ? ' · R' : ''}</span>{s.patron && <span className="badge gold" style={{ marginLeft: 4 }}>{s.patron}</span>}
               </span>
             </div>
             {open === s.index && <div className="muted small pre" style={{ padding: '4px 0 4px 24px' }}>{s.casting_time} · {s.range} · {s.components} · {s.duration}{'\n'}{s.desc}</div>}
